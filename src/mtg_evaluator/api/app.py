@@ -312,7 +312,7 @@ async def build_pool(req: BuildRequest):
             )
 
             assembled_deck = assemble_deck(pool, bracket=req.bracket)
-            warnings = validate_assembled_deck(assembled_deck)
+            warnings = validate_assembled_deck(assembled_deck, pool.role_targets)
             assembled = {
                 "lands": assembled_deck.lands,
                 "ramp": assembled_deck.ramp,
@@ -326,6 +326,25 @@ async def build_pool(req: BuildRequest):
                 "expected_total": 98 if assembled_deck.has_partner else 99,
                 "moxfield_text": assembled_deck.to_moxfield(),
                 "validation_warnings": warnings,
+                "repair_notes": assembled_deck.repair_notes,
+                "mana_analysis": (
+                    assembled_deck.mana_analysis.to_dict()
+                    if assembled_deck.mana_analysis
+                    else None
+                ),
+                "consistency": (
+                    assembled_deck.consistency.to_dict()
+                    if assembled_deck.consistency
+                    else None
+                ),
+                "package_health": (
+                    assembled_deck.package_health.to_dict()
+                    if assembled_deck.package_health
+                    else None
+                ),
+                "nonbo_warnings": [
+                    warning.to_dict() for warning in assembled_deck.nonbo_warnings
+                ],
             }
         except Exception as e:
             assembled = {"error": str(e)}

@@ -9,34 +9,47 @@ Token budget: ~2,500-3,500 input, ~800-1,000 output per call.
 
 The LLM receives:
   - Commander(s), archetype, bracket, color identity
-  - Role targets (ramp/draw/removal counts)
+  - Dynamic role targets (lands/ramp/draw/removal/package support)
   - Top ~120 candidates with tier, functions, score
   - Any known combos
 
 It returns a structured tool call with cards grouped by role, plus
 a 3-5 sentence explanation of the key choices.
 
-Lands are handled separately — we pre-select the best available lands
+Lands are handled separately: we pre-select the best available lands
 from the pool, then the LLM fills the remaining 62-65 nonland slots.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 import anthropic
 
+from mtg_evaluator.card_functions import has_function, normalize_functions, role_bucket
 from mtg_evaluator.config import settings
 from mtg_evaluator.deckbuilding.pool import CardPool, PoolCard
+from mtg_evaluator.deckbuilding.consistency import (
+    ConsistencyReport,
+    compute_consistency,
+)
+from mtg_evaluator.deckbuilding.mana_analysis import ManaAnalysis, analyze_mana_base
+from mtg_evaluator.deckbuilding.packages import (
+    ARCHETYPE_PACKAGES,
+    NonboWarning,
+    PackageHealth,
+    check_package_health,
+    detect_nonbos,
+)
+from mtg_evaluator.deckbuilding.role_targets import RoleTargets
 
 _SYSTEM_PROMPT = """\
 You are an expert Magic: The Gathering Commander deck builder. Given a scored candidate pool, \
 select exactly the right cards to build a tight, coherent 99-card Commander deck.
 
 GUIDELINES:
-- Target mana curve: ~35-38 nonbasic + basic lands, 10-12 ramp pieces, 8-10 draw, 5-7 removal, \
-  1-3 board wipes, 2-3 protection pieces. The rest fills the archetype gameplan.
+- Use the role targets provided in the request; they are commander-, bracket-, and archetype-aware.
+- Keep the mana curve coherent for the bracket and commander. The rest fills the archetype gameplan.
 - Prefer cards that do double duty (ramp + on-theme, draw + synergy).
 - Avoid redundancy: if you already have Demonic Tutor, you may not need Vampiric Tutor unless \
   tutors ARE the strategy.
@@ -107,20 +120,6 @@ _TOOL_SCHEMA = {
     },
 }
 
-# Role targets by bracket.
-# B4/B5 run significantly fewer basic lands because fast mana (Sol Ring, Mana Vault,
-# Chrome Mox, etc.) fills the gap. Total mana sources stays ~40; it's just the
-# land/rock split that shifts.
-_ROLE_TARGETS = {
-    1: dict(lands=38, ramp=10, draw=8, removal=6),
-    2: dict(lands=37, ramp=11, draw=9, removal=6),
-    3: dict(lands=36, ramp=12, draw=10, removal=7),
-    4: dict(lands=32, ramp=14, draw=10, removal=6),  # fast mana replaces 3-4 land slots
-    5: dict(
-        lands=29, ramp=16, draw=11, removal=5
-    ),  # cEDH: maximize fast mana & interaction
-}
-
 # Validation minimums per bracket (what we'll warn on if underfilled).
 # Lands + ramp should sum to ~42 at any bracket for consistent mana.
 _VALIDATE_MINIMUMS = {
@@ -160,6 +159,12 @@ class AssembledDeck:
     other: list[str] = field(default_factory=list)
 
     reasoning: str = ""
+    role_targets: RoleTargets | None = None
+    mana_analysis: ManaAnalysis | None = None
+    consistency: ConsistencyReport | None = None
+    package_health: PackageHealth | None = None
+    nonbo_warnings: list[NonboWarning] = field(default_factory=list)
+    repair_notes: list[str] = field(default_factory=list)
 
     @property
     def all_cards(self) -> list[str]:
@@ -213,7 +218,9 @@ class AssembledDeck:
         return "\n".join(lines)
 
 
-def validate_assembled_deck(deck: AssembledDeck) -> list[str]:
+def validate_assembled_deck(
+    deck: AssembledDeck, role_targets: RoleTargets | None = None
+) -> list[str]:
     """
     Post-assembly sanity checks. Returns a list of warning strings.
     Empty list means the deck passes all checks.
@@ -242,9 +249,13 @@ def validate_assembled_deck(deck: AssembledDeck) -> list[str]:
     if dupes:
         warnings.append(f"Duplicate cards selected: {', '.join(sorted(dupes))}")
 
-    # 3. Bracket-aware role minimums
-    minimums = _VALIDATE_MINIMUMS.get(deck.bracket, _VALIDATE_MINIMUMS[3])
+    # 3. Role minimums. Prefer dynamic pool targets; fixed values are a fallback
+    # for callers that validate an assembled deck outside the pool builder.
+    target_map = role_targets.to_dict() if role_targets else None
+    minimums = target_map or _VALIDATE_MINIMUMS.get(deck.bracket, _VALIDATE_MINIMUMS[3])
     for role, minimum in minimums.items():
+        if role in {"board_wipe", "protection", "finisher"}:
+            continue
         count = len(getattr(deck, role, []))
         if count < minimum:
             if role == "lands":
@@ -272,6 +283,157 @@ def validate_assembled_deck(deck: AssembledDeck) -> list[str]:
     return warnings
 
 
+def _category_for_card(card: PoolCard) -> str:
+    """Best-effort category for repair fills using normalized functions."""
+    type_line = card.type_line.lower()
+    if "land" in type_line:
+        return "lands"
+    if has_function(card.functions, "ramp"):
+        return "ramp"
+    if has_function(card.functions, "draw"):
+        return "draw"
+    if (
+        has_function(card.functions, "removal")
+        or has_function(card.functions, "board_wipe")
+        or has_function(card.functions, "counterspell")
+    ):
+        return "removal"
+    if card.combo_ids or has_function(card.functions, "combo_piece"):
+        return "combo"
+    if any(
+        has_function(card.functions, role)
+        for role in ("token_maker", "sacrifice_outlet", "recursion", "finisher")
+    ):
+        return "synergy"
+    return "other"
+
+
+def _clean_and_repair(
+    deck: AssembledDeck,
+    candidates: list[PoolCard],
+    expected_total: int,
+) -> None:
+    """Drop invalid/duplicate names, then backfill with best unused candidates."""
+    candidates_by_name = {card.name: card for card in candidates}
+    selected: set[str] = set()
+    notes: list[str] = []
+
+    for category in ("lands", "ramp", "draw", "removal", "synergy", "combo", "other"):
+        cleaned: list[str] = []
+        for raw_name in getattr(deck, category):
+            name = str(raw_name).strip()
+            if not name:
+                continue
+            if name not in candidates_by_name:
+                notes.append(f"Dropped hallucinated card: {name}")
+                continue
+            if name in selected:
+                notes.append(f"Dropped duplicate card: {name}")
+                continue
+            selected.add(name)
+            cleaned.append(name)
+        setattr(deck, category, cleaned)
+
+    if deck.total >= expected_total:
+        deck.repair_notes = notes
+        return
+
+    for card in sorted(candidates, key=lambda c: c.score, reverse=True):
+        if deck.total >= expected_total:
+            break
+        if card.name in selected:
+            continue
+        category = _category_for_card(card)
+        getattr(deck, category).append(card.name)
+        selected.add(card.name)
+        notes.append(f"Repaired missing slot with {card.name} ({category})")
+
+    deck.repair_notes = notes
+
+
+def _analyze_assembled_deck(deck: AssembledDeck, pool: CardPool) -> None:
+    """Attach final-deck analyses using the selected 98/99, not the candidate pool."""
+    cards_by_name = {card.name: card for card in pool.all_cards}
+    selected_cards = [
+        cards_by_name[name] for name in deck.all_cards if name in cards_by_name
+    ]
+    flat_functions: list[str] = []
+    card_functions: dict[str, list[str]] = {}
+
+    for card in selected_cards:
+        functions = normalize_functions(card.functions)
+        flat_functions.extend(functions)
+        card_functions[card.name] = functions
+
+    land_names = [name for name in deck.lands if name in cards_by_name]
+    ramp_count = sum(
+        1 for card in selected_cards if has_function(card.functions, "ramp")
+    )
+    board_wipe_count = sum(
+        1 for card in selected_cards if has_function(card.functions, "board_wipe")
+    )
+    interaction_count = sum(
+        1
+        for card in selected_cards
+        if any(
+            role_bucket(fn) in {"removal", "board_wipe", "counterspell"}
+            for fn in normalize_functions(card.functions)
+        )
+    )
+    creature_count = sum(
+        1 for card in selected_cards if "creature" in card.type_line.lower()
+    )
+    nonland_cards = [
+        card for card in selected_cards if "land" not in card.type_line.lower()
+    ]
+    avg_cmc = (
+        sum(card.cmc for card in nonland_cards) / len(nonland_cards)
+        if nonland_cards
+        else 3.5
+    )
+
+    enabler_count = 0
+    payoff_count = 0
+    pkg = ARCHETYPE_PACKAGES.get(pool.archetype or "")
+    if pkg:
+        for card in selected_cards:
+            functions = normalize_functions(card.functions)
+            if any(fn in pkg.enabler_functions for fn in functions):
+                enabler_count += 1
+            if any(fn in pkg.payoff_functions for fn in functions):
+                payoff_count += 1
+
+    deck.role_targets = pool.role_targets
+    deck.mana_analysis = analyze_mana_base(
+        land_names=land_names,
+        commander_mana_cost=pool.commander_mana_cost,
+        commander_cmc=pool.commander_cmc,
+        deck_color_identity=pool.color_identity,
+        partner_mana_cost=pool.partner_mana_cost,
+    )
+    deck.consistency = compute_consistency(
+        land_count=len(land_names),
+        ramp_count=ramp_count,
+        interaction_count=interaction_count,
+        commander_cmc=pool.commander_cmc,
+        enabler_count=enabler_count,
+        payoff_count=payoff_count,
+        deck_size=98 if deck.has_partner else 99,
+    )
+    deck.package_health = check_package_health(pool.archetype, flat_functions)
+    deck.nonbo_warnings = detect_nonbos(
+        archetype=pool.archetype,
+        all_functions=flat_functions,
+        all_card_names=list(card_functions),
+        all_card_functions=card_functions,
+        ramp_count=ramp_count,
+        avg_cmc=avg_cmc,
+        land_count=len(land_names),
+        board_wipe_count=board_wipe_count,
+        creature_count=creature_count,
+    )
+
+
 def assemble_deck(pool: CardPool, bracket: int = 3) -> AssembledDeck:
     """
     Call DeepSeek to select the final deck from the scored pool.
@@ -280,8 +442,12 @@ def assemble_deck(pool: CardPool, bracket: int = 3) -> AssembledDeck:
     """
     has_partner = " + " in pool.commander_name
     deck_size = 98 if has_partner else 99
-    targets = _ROLE_TARGETS.get(bracket, _ROLE_TARGETS[3])
-    total_nonland = deck_size - targets["lands"]
+    targets = (
+        pool.role_targets.to_dict()
+        if pool.role_targets
+        else _VALIDATE_MINIMUMS.get(bracket, _VALIDATE_MINIMUMS[3])
+    )
+    total_nonland = deck_size - targets.get("lands", 36)
 
     # Build candidate list — top 120 by score, show tier + functions
     all_candidates = pool.core + pool.support + pool.flex
@@ -315,8 +481,11 @@ def assemble_deck(pool: CardPool, bracket: int = 3) -> AssembledDeck:
     )
 
     role_target_line = (
-        f"Role targets: {targets['lands']} lands, {targets['ramp']} ramp, "
-        f"{targets['draw']} draw, {targets['removal']} removal, "
+        f"Role targets: {targets.get('lands', 36)} lands, {targets.get('ramp', 10)} ramp, "
+        f"{targets.get('draw', 8)} draw, {targets.get('removal', 6)} removal, "
+        f"{targets.get('board_wipe', 2)} board wipes, "
+        f"{targets.get('protection', 2)} protection, "
+        f"{targets.get('finisher', 3)} finishers, "
         f"~{total_nonland} total nonland"
     )
     want_combos = "YES — include combo pieces" if pool.combos else "No combos requested"
@@ -360,30 +529,22 @@ Select exactly {deck_size} cards total across all categories. Card names must ma
     tool_use = next(b for b in response.content if b.type == "tool_use")
     inp = tool_use.input
 
-    # Validate — remove any cards not in candidate pool (hallucinations)
-    valid_names = {c.name for c in candidates}
-
-    def _clean(names: list) -> list[str]:
-        out = []
-        for n in names or []:
-            name = str(n).strip()
-            if name in valid_names:
-                out.append(name)
-        return out
-
+    # Clean hallucinations/duplicates, repair missing slots, then analyze final deck.
     deck = AssembledDeck(
         commander=pool.commander_name,
         archetype=pool.archetype,
         bracket=bracket,
         has_partner=has_partner,
-        lands=_clean(inp.get("lands", [])),
-        ramp=_clean(inp.get("ramp", [])),
-        draw=_clean(inp.get("draw", [])),
-        removal=_clean(inp.get("removal", [])),
-        synergy=_clean(inp.get("synergy", [])),
-        combo=_clean(inp.get("combo", [])),
-        other=_clean(inp.get("other", [])),
+        lands=list(inp.get("lands", []) or []),
+        ramp=list(inp.get("ramp", []) or []),
+        draw=list(inp.get("draw", []) or []),
+        removal=list(inp.get("removal", []) or []),
+        synergy=list(inp.get("synergy", []) or []),
+        combo=list(inp.get("combo", []) or []),
+        other=list(inp.get("other", []) or []),
         reasoning=inp.get("reasoning", ""),
     )
+    _clean_and_repair(deck, candidates, deck_size)
+    _analyze_assembled_deck(deck, pool)
 
     return deck

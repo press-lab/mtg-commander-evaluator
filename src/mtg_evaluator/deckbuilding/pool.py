@@ -105,6 +105,10 @@ class CardPool:
     commander_name: str
     color_identity: list[str]
     archetype: Optional[str]
+    commander_mana_cost: Optional[str] = None
+    commander_cmc: float = 3.0
+    partner_mana_cost: Optional[str] = None
+    partner_cmc: Optional[float] = None
 
     core: list[PoolCard] = field(default_factory=list)
     combos: list[ComboSummary] = field(default_factory=list)
@@ -282,6 +286,10 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         commander_name=partner_display,
         color_identity=color_identity,
         archetype=canonical_archetype,
+        commander_mana_cost=commander.mana_cost,
+        commander_cmc=float(commander.cmc or 3),
+        partner_mana_cost=partner_card.mana_cost if partner_card else None,
+        partner_cmc=float(partner_card.cmc or 0) if partner_card else None,
         commander_profile=profile,
     )
 

@@ -199,6 +199,83 @@ class TestCardPoolProperties:
         assert pool.total == 0
 
 
+class TestAssemblerRepair:
+    def _pool_card(self, name, type_line="Creature", functions=None, score=50.0):
+        return PoolCard(
+            name=name,
+            oracle_id=f"{name}-oid",
+            tier="SUPPORT",
+            score=score,
+            archetype_score=3.0,
+            bracket_score=3.0,
+            role_quality=3.0,
+            functions=functions or [],
+            is_game_changer=False,
+            combo_ids=[],
+            edhrec_decks=1000,
+            type_line=type_line,
+            cmc=2.0,
+        )
+
+    def test_repair_drops_invalid_and_backfills(self):
+        from mtg_evaluator.deckbuilding.assembler import (
+            AssembledDeck,
+            _clean_and_repair,
+        )
+
+        candidates = [
+            self._pool_card("Command Tower", "Land", score=90),
+            self._pool_card("Sol Ring", "Artifact", ["ramp"], score=80),
+            self._pool_card("Sign in Blood", "Sorcery", ["draw"], score=70),
+        ]
+        deck = AssembledDeck(
+            commander="Test Commander",
+            archetype=None,
+            bracket=3,
+            lands=["Command Tower", "Fake Land", "Command Tower"],
+        )
+
+        _clean_and_repair(deck, candidates, expected_total=3)
+
+        assert deck.total == 3
+        assert "Fake Land" not in deck.all_cards
+        assert deck.all_cards.count("Command Tower") == 1
+        assert "Sol Ring" in deck.all_cards
+        assert deck.repair_notes
+
+    def test_validation_uses_dynamic_role_targets(self):
+        from mtg_evaluator.deckbuilding.assembler import (
+            AssembledDeck,
+            validate_assembled_deck,
+        )
+        from mtg_evaluator.deckbuilding.role_targets import RoleTargets
+
+        deck = AssembledDeck(
+            commander="Test Commander",
+            archetype=None,
+            bracket=4,
+            lands=[f"Land {i}" for i in range(30)],
+            ramp=[f"Ramp {i}" for i in range(10)],
+            draw=[f"Draw {i}" for i in range(8)],
+            removal=[f"Removal {i}" for i in range(5)],
+            other=[f"Other {i}" for i in range(46)],
+        )
+        dynamic_targets = RoleTargets(
+            lands=30,
+            ramp=10,
+            draw=8,
+            removal=5,
+            board_wipe=1,
+            protection=1,
+            finisher=1,
+        )
+
+        warnings = validate_assembled_deck(deck, dynamic_targets)
+
+        assert not any("Low lands" in warning for warning in warnings)
+        assert not any("Low ramp" in warning for warning in warnings)
+
+
 # ===========================================================================
 # Unit tests for scoring + tutor density logic (mocked DB)
 # ===========================================================================
