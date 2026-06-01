@@ -1,0 +1,1403 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MTG Commander Evaluator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+
+    body {
+      background: #0f1117;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+
+    .mana-w { color: #f9e79f; }
+    .mana-u { color: #85c1e9; }
+    .mana-b { color: #bb8fce; }
+    .mana-r { color: #ec7063; }
+    .mana-g { color: #82e0aa; }
+    .mana-c { color: #aeb6bf; }
+
+    .bracket-1  { background: #166534; color: #bbf7d0; }
+    .bracket-2  { background: #14532d; color: #86efac; }
+    .bracket-3  { background: #713f12; color: #fef08a; }
+    .bracket-4  { background: #7c2d12; color: #fed7aa; }
+    .bracket-5  { background: #7f1d1d; color: #fecaca; }
+
+    .card-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #1e293b;
+      border: 1px solid #334155;
+    }
+
+    .score-ring {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 800;
+      border: 4px solid;
+      flex-shrink: 0;
+    }
+
+    .tab-btn {
+      padding: 8px 20px;
+      border-radius: 8px 8px 0 0;
+      font-weight: 600;
+      font-size: 14px;
+      transition: all 0.15s;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: #1e293b;
+      border-bottom-color: #6366f1;
+      color: #a5b4fc;
+    }
+    .tab-btn:not(.active) {
+      color: #64748b;
+    }
+    .tab-btn:not(.active):hover {
+      color: #94a3b8;
+    }
+
+    .role-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: #1e293b;
+      overflow: hidden;
+    }
+    .role-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    .card-row:hover { background: #1e293b; }
+
+    input, textarea, select {
+      background: #1e293b !important;
+      border-color: #334155 !important;
+      color: #e2e8f0 !important;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: #6366f1 !important;
+      box-shadow: 0 0 0 2px rgba(99,102,241,0.2);
+    }
+
+    .btn-primary {
+      background: #4f46e5;
+      color: white;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-weight: 600;
+      transition: background 0.15s;
+      cursor: pointer;
+    }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-primary:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: #1e293b;
+      color: #94a3b8;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      border: 1px solid #334155;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-secondary:hover { background: #273549; color: #e2e8f0; }
+
+    .combo-tag-R { background: #7f1d1d; color: #fca5a5; }
+    .combo-tag-S { background: #7c2d12; color: #fdba74; }
+    .combo-tag-P { background: #713f12; color: #fde68a; }
+    .combo-tag-O { background: #14532d; color: #86efac; }
+    .combo-tag-C { background: #1e3a5f; color: #93c5fd; }
+    .combo-tag-E { background: #312e81; color: #c4b5fd; }
+
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #334155;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .search-dropdown {
+      position: absolute;
+      z-index: 50;
+      width: 100%;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      margin-top: 4px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .search-dropdown li {
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 14px;
+      border-bottom: 1px solid #0f1117;
+    }
+    .search-dropdown li:last-child { border-bottom: none; }
+    .search-dropdown li:hover { background: #273549; }
+
+    .gc-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      background: #7c2d12;
+      color: #fed7aa;
+      margin-left: 4px;
+      vertical-align: middle;
+    }
+
+    .tier-core    { border-left: 3px solid #6366f1; }
+    .tier-support { border-left: 3px solid #0ea5e9; }
+    .tier-flex    { border-left: 3px solid #334155; }
+  </style>
+</head>
+<body>
+
+<div x-data="app()" x-cloak class="min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800 px-6 py-4 flex items-center gap-4">
+    <div class="text-2xl font-bold text-indigo-400">⚔️ Commander Evaluator</div>
+    <div class="text-slate-500 text-sm">Bracket analysis · Deck building · Card discovery</div>
+  </header>
+
+  <!-- Tab bar -->
+  <div class="border-b border-slate-800 px-6 flex gap-1 bg-slate-900/40">
+    <button class="tab-btn" :class="tab==='evaluate' && 'active'" @click="tab='evaluate'">
+      📋 Evaluate My Deck
+    </button>
+    <button class="tab-btn" :class="tab==='build' && 'active'" @click="tab='build'">
+      🔨 Build a Deck
+    </button>
+    <button class="tab-btn" :class="tab==='browse' && 'active'" @click="tab='browse'">
+      🔍 Browse Cards
+    </button>
+    <button class="tab-btn" :class="tab==='commanders' && 'active'" @click="tab='commanders'">
+      👑 Find Commanders
+    </button>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- TAB: EVALUATE -->
+  <!-- ============================================================ -->
+  <div x-show="tab==='evaluate'" class="max-w-6xl mx-auto px-6 py-8">
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+      <!-- Input panel -->
+      <div>
+        <h2 class="text-xl font-bold text-slate-200 mb-4">Paste Your Decklist</h2>
+        <p class="text-slate-400 text-sm mb-4">
+          Supports Moxfield, MTGO, or plain text format. Mark your commander with
+          <code class="text-indigo-400">*CMDR*</code> or put them in a
+          <code class="text-indigo-400">Commander</code> section.
+        </p>
+
+        <div class="mb-4">
+          <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Deck Name (optional)</label>
+          <input
+            type="text"
+            x-model="evalForm.deckName"
+            placeholder="My Henzie Deck"
+            class="w-full px-3 py-2 rounded-lg border text-sm"
+          />
+        </div>
+
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Decklist</label>
+        <textarea
+          x-model="evalForm.decklist"
+          rows="20"
+          placeholder="1 Henzie &quot;Toolbox&quot; Torre *CMDR*&#10;1 Demonic Tutor&#10;1 Sol Ring&#10;1 Mana Vault&#10;..."
+          class="w-full px-3 py-2 rounded-lg border text-sm font-mono resize-y"
+        ></textarea>
+
+        <div class="mt-4 flex gap-3">
+          <button
+            class="btn-primary"
+            :disabled="evalLoading || !evalForm.decklist.trim()"
+            @click="runEvaluate()"
+          >
+            <span x-show="!evalLoading">⚡ Evaluate Deck</span>
+            <span x-show="evalLoading">Evaluating…</span>
+          </button>
+          <button class="btn-secondary" @click="evalForm.decklist=''; evalResult=null">Clear</button>
+        </div>
+
+        <div x-show="evalError" class="mt-4 p-3 rounded-lg bg-red-950 border border-red-800 text-red-300 text-sm" x-text="evalError"></div>
+      </div>
+
+      <!-- Results panel -->
+      <div>
+        <!-- Loading -->
+        <div x-show="evalLoading" class="flex flex-col items-center justify-center py-24 gap-4">
+          <div class="spinner"></div>
+          <p class="text-slate-400 text-sm">Analyzing deck… this may take 10-20s</p>
+        </div>
+
+        <!-- Results -->
+        <div x-show="evalResult && !evalLoading">
+          <template x-if="evalResult">
+
+            <div class="space-y-5">
+
+              <!-- Header: commander + bracket + score -->
+              <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-5 flex gap-5 items-start">
+                <!-- Score ring -->
+                <div
+                  class="score-ring"
+                  :style="`border-color: ${evalResult.bracket_color}; color: ${evalResult.bracket_color}`"
+                  x-text="evalResult.deck_score"
+                ></div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-xl font-bold text-slate-100 truncate" x-text="evalResult.commander || 'Unknown Commander'"></div>
+                  <div class="mt-1 text-sm text-slate-400" x-text="evalResult.archetype ? `Archetype: ${evalResult.archetype}` : ''"></div>
+                  <div class="mt-2 flex flex-wrap gap-2 items-center">
+                    <span
+                      class="px-3 py-1 rounded-full text-sm font-bold"
+                      :class="`bracket-${evalResult.bracket_int}`"
+                      x-text="evalResult.bracket_label"
+                    ></span>
+                    <span class="text-slate-500 text-xs">/100 composite score</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bracket reasoning -->
+              <div x-show="evalResult.bracket_reasoning" class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Why This Bracket</div>
+                <p class="text-sm text-slate-300 leading-relaxed" x-text="evalResult.bracket_reasoning"></p>
+              </div>
+
+              <!-- Role coverage -->
+              <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Role Coverage</div>
+                <div class="space-y-2">
+                  <template x-for="role in evalResult.role_coverage" :key="role.role">
+                    <div class="flex items-center gap-3">
+                      <div class="w-6 text-center" x-text="role.icon"></div>
+                      <div class="w-28 text-sm text-slate-300 capitalize" x-text="role.role.replace('_',' ')"></div>
+                      <div class="flex-1 role-bar">
+                        <div
+                          class="role-bar-fill"
+                          :style="`width: ${Math.min(role.count / role.minimum * 100, 100)}%; background: ${role.status === 'good' ? '#22c55e' : role.status === 'warn' ? '#eab308' : '#ef4444'}`"
+                        ></div>
+                      </div>
+                      <div
+                        class="text-xs font-mono w-12 text-right"
+                        :class="role.status === 'good' ? 'text-green-400' : role.status === 'warn' ? 'text-yellow-400' : 'text-red-400'"
+                      >
+                        <span x-text="role.count"></span>/<span x-text="role.minimum"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Game Changers + combos -->
+              <div class="grid grid-cols-2 gap-4">
+
+                <!-- Game changers -->
+                <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                  <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                    Game Changers
+                    <span class="ml-1 px-2 py-0.5 rounded-full text-xs"
+                      :class="evalResult.game_changers.length === 0 ? 'bg-green-900 text-green-300' : evalResult.game_changers.length <= 3 ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'"
+                      x-text="evalResult.game_changers.length"
+                    ></span>
+                  </div>
+                  <div x-show="evalResult.game_changers.length === 0" class="text-sm text-green-400">None — B1/B2 legal</div>
+                  <ul class="space-y-1">
+                    <template x-for="gc in evalResult.game_changers" :key="gc">
+                      <li class="text-xs text-orange-300 flex items-center gap-1">
+                        <span class="text-orange-500">⚠</span> <span x-text="gc"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+
+                <!-- Combos -->
+                <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                  <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                    Combos
+                    <span class="ml-1 px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-xs" x-text="evalResult.combos.length"></span>
+                  </div>
+                  <div x-show="evalResult.combos.length === 0" class="text-sm text-slate-500">None detected</div>
+                  <ul class="space-y-2">
+                    <template x-for="combo in evalResult.combos.slice(0,5)" :key="combo.id">
+                      <li>
+                        <div class="flex items-center gap-2 mb-0.5">
+                          <span class="card-pill" :class="`combo-tag-${combo.tag}`" x-text="combo.tag"></span>
+                          <span class="text-xs text-slate-400 truncate" x-text="combo.result || 'Infinite'"></span>
+                        </div>
+                        <div class="text-xs text-slate-500 truncate" x-text="combo.cards.join(' + ')"></div>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- Suggestions -->
+              <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
+                  💡 How to Move Your Bracket
+                </div>
+
+                <!-- Upgrade -->
+                <div x-show="evalResult.upgrade_suggestions.length > 0" class="mb-4">
+                  <div class="text-sm font-semibold text-green-400 mb-2">⬆ Add These to Power Up</div>
+                  <div class="flex flex-wrap gap-2">
+                    <template x-for="sug in evalResult.upgrade_suggestions" :key="sug.name || sug">
+                      <span class="card-pill text-indigo-300">
+                        <span x-text="sug.name || sug"></span>
+                        <span class="text-slate-500 text-[10px]" x-show="sug.archetype_score" x-text="`${sug.archetype_score}/5`"></span>
+                      </span>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- Downgrade -->
+                <div x-show="evalResult.downgrade_suggestions.length > 0">
+                  <div class="text-sm font-semibold text-orange-400 mb-2">⬇ Remove These to Lower Bracket</div>
+                  <ul class="space-y-1">
+                    <template x-for="sug in evalResult.downgrade_suggestions" :key="sug.name">
+                      <li class="text-sm text-slate-300">
+                        <span class="font-medium text-orange-300" x-text="sug.name"></span>
+                        <span class="text-slate-500 ml-2 text-xs" x-text="sug.reason"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+
+                <div x-show="evalResult.upgrade_suggestions.length === 0 && evalResult.downgrade_suggestions.length === 0"
+                  class="text-sm text-slate-500">
+                  No suggestions — archetype not fully classified yet.
+                </div>
+              </div>
+
+              <!-- Gaps -->
+              <div x-show="evalResult.gaps.length > 0" class="rounded-xl border border-yellow-900/50 bg-yellow-950/20 p-4">
+                <div class="text-xs font-semibold text-yellow-400 uppercase tracking-wide mb-2">⚠ Structural Gaps</div>
+                <ul class="space-y-1">
+                  <template x-for="gap in evalResult.gaps" :key="gap">
+                    <li class="text-sm text-yellow-300" x-text="gap"></li>
+                  </template>
+                </ul>
+              </div>
+
+              <!-- Unclassified -->
+              <div x-show="evalResult.unclassified_count > 0" class="text-xs text-slate-500">
+                <span x-text="evalResult.unclassified_count"></span> cards not yet classified in DB.
+                <button class="underline ml-1" @click="showUnclassified = !showUnclassified">Show</button>
+                <div x-show="showUnclassified" class="mt-1 text-slate-600 columns-2" x-text="evalResult.unclassified_cards.join(', ')"></div>
+              </div>
+
+            </div>
+          </template>
+        </div>
+
+        <!-- Empty state -->
+        <div x-show="!evalResult && !evalLoading" class="flex flex-col items-center justify-center py-24 text-slate-600">
+          <div class="text-5xl mb-4">📋</div>
+          <p class="text-base">Paste your deck on the left to get started</p>
+          <p class="text-sm mt-2">Evaluation includes bracket analysis, role coverage, and suggestions</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- TAB: BUILD -->
+  <!-- ============================================================ -->
+  <div x-show="tab==='build'" class="max-w-7xl mx-auto px-6 py-8">
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+      <!-- Build form -->
+      <div class="lg:col-span-1">
+        <h2 class="text-xl font-bold text-slate-200 mb-4">Deck Builder</h2>
+
+        <!-- Commander search -->
+        <div class="mb-4 relative">
+          <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Commander</label>
+          <input
+            type="text"
+            x-model="buildForm.commanderQuery"
+            @input.debounce.300ms="searchCommanders()"
+            @focus="showCommanderDropdown = true"
+            placeholder="Search commanders…"
+            class="w-full px-3 py-2 rounded-lg border text-sm"
+          />
+          <div
+            x-show="showCommanderDropdown && commanderSuggestions.length > 0"
+            class="search-dropdown"
+            @click.away="showCommanderDropdown = false"
+          >
+            <ul>
+              <template x-for="c in commanderSuggestions" :key="c.oracle_id">
+                <li @click="selectCommander(c)">
+                  <div class="font-medium" x-text="c.name"></div>
+                  <div class="text-xs text-slate-500 mt-0.5">
+                    <span x-text="c.color_identity.length ? c.color_identity.join('') : 'C'"></span>
+                    — <span x-text="c.type_line"></span>
+                  </div>
+                </li>
+              </template>
+            </ul>
+          </div>
+          <div x-show="buildForm.commanderName" class="mt-1 text-xs text-indigo-400">
+            Selected: <span class="font-semibold" x-text="buildForm.commanderName"></span>
+          </div>
+        </div>
+
+        <!-- ── PARTNER SECTION ── -->
+        <div x-show="commanderPartnerInfo !== null" class="mb-4">
+          <div class="rounded-xl border border-purple-900/60 bg-purple-950/20 p-3">
+            <!-- Header: what mechanic is this? -->
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-xs font-semibold text-purple-300 uppercase tracking-wide">
+                🤝 <span x-text="commanderPartnerInfo && commanderPartnerInfo.label"></span>
+              </div>
+              <!-- Toggle: solo vs with partner -->
+              <div class="flex gap-1">
+                <button
+                  class="text-xs px-2 py-1 rounded border transition-all"
+                  :class="buildForm.useSolo
+                    ? 'bg-slate-700 border-slate-500 text-slate-200'
+                    : 'bg-slate-800 border-slate-700 text-slate-500'"
+                  @click="buildForm.useSolo = true; buildForm.partnerName = ''"
+                >Solo</button>
+                <button
+                  class="text-xs px-2 py-1 rounded border transition-all"
+                  :class="!buildForm.useSolo
+                    ? 'bg-purple-800 border-purple-500 text-purple-200'
+                    : 'bg-slate-800 border-slate-700 text-slate-500'"
+                  @click="buildForm.useSolo = false"
+                >With Partner</button>
+              </div>
+            </div>
+
+            <!-- Partner search / display (only when not solo) -->
+            <div x-show="!buildForm.useSolo">
+
+              <!-- Named partner: auto-show, no search needed -->
+              <div x-show="commanderPartnerInfo && commanderPartnerInfo.type === 'named_partner'">
+                <div class="text-xs text-slate-400 mb-1">Only valid partner:</div>
+                <button
+                  class="w-full text-left px-3 py-2 rounded-lg border text-sm transition-all"
+                  :class="buildForm.partnerName === (commanderPartnerInfo && commanderPartnerInfo.named_partner)
+                    ? 'border-purple-500 bg-purple-900/40 text-purple-200'
+                    : 'border-slate-700 bg-slate-800 text-slate-300 hover:border-purple-700'"
+                  @click="buildForm.partnerName = commanderPartnerInfo.named_partner"
+                  x-text="commanderPartnerInfo && commanderPartnerInfo.named_partner"
+                ></button>
+              </div>
+
+              <!-- Generic / choose_background / doctors_companion / friends_forever: search list -->
+              <div x-show="commanderPartnerInfo && commanderPartnerInfo.type !== 'named_partner'">
+                <div class="text-xs text-slate-500 mb-2" x-text="commanderPartnerInfo && commanderPartnerInfo.search_hint"></div>
+
+                <!-- Search filter within valid partners -->
+                <input
+                  type="text"
+                  x-model="partnerSearch"
+                  placeholder="Filter partners…"
+                  class="w-full px-2 py-1.5 rounded border text-xs mb-2"
+                />
+
+                <div class="max-h-40 overflow-y-auto space-y-0.5">
+                  <template x-for="p in filteredPartners()" :key="p.oracle_id">
+                    <button
+                      class="w-full text-left px-3 py-1.5 rounded border text-xs transition-all"
+                      :class="buildForm.partnerName === p.name
+                        ? 'border-purple-500 bg-purple-900/40 text-purple-200'
+                        : 'border-transparent hover:bg-slate-800 text-slate-300'"
+                      @click="buildForm.partnerName = p.name"
+                    >
+                      <span class="font-medium" x-text="p.name"></span>
+                      <span class="text-slate-600 ml-2" x-text="p.color_identity.join('')"></span>
+                    </button>
+                  </template>
+                  <div x-show="filteredPartners().length === 0" class="text-slate-600 text-xs px-2 py-2">
+                    No matches
+                  </div>
+                </div>
+              </div>
+
+              <!-- Selected partner display -->
+              <div x-show="buildForm.partnerName" class="mt-2 flex items-center gap-2">
+                <div class="text-xs text-purple-400">
+                  Partner: <span class="font-semibold" x-text="buildForm.partnerName"></span>
+                </div>
+                <button class="text-xs text-slate-600 hover:text-slate-400" @click="buildForm.partnerName = ''">✕</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bracket -->
+        <div class="mb-4">
+          <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Bracket</label>
+          <div class="grid grid-cols-5 gap-1">
+            <template x-for="b in [1,2,3,4,5]" :key="b">
+              <button
+                class="py-2 rounded-lg text-sm font-bold transition-all border"
+                :class="buildForm.bracket === b
+                  ? `bracket-${b} border-transparent`
+                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'"
+                @click="buildForm.bracket = b"
+                x-text="'B' + b"
+              ></button>
+            </template>
+          </div>
+          <div class="text-xs text-slate-500 mt-1" x-text="bracketName(buildForm.bracket)"></div>
+        </div>
+
+        <!-- Archetype -->
+        <div class="mb-4" x-show="buildForm.commanderName">
+          <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Archetype</label>
+          <select x-model="buildForm.archetype" class="w-full px-3 py-2 rounded-lg border text-sm">
+            <option value="">Auto-detect</option>
+            <template x-for="a in commanderArchetypes" :key="a.archetype">
+              <option :value="a.archetype" x-text="`${a.archetype} (${a.score}/5)`"></option>
+            </template>
+          </select>
+        </div>
+
+        <!-- Combos -->
+        <div class="mb-4 flex items-center gap-3">
+          <label class="relative inline-flex cursor-pointer items-center">
+            <input type="checkbox" x-model="buildForm.wantCombos" class="sr-only peer" />
+            <div class="w-10 h-5 bg-slate-700 rounded-full peer-checked:bg-indigo-600 transition-colors
+              after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full
+              after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5"></div>
+          </label>
+          <span class="text-sm text-slate-300">Include Combos</span>
+        </div>
+
+        <!-- Tutor density -->
+        <div class="mb-6">
+          <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Tutor Density</label>
+          <div class="flex gap-2">
+            <template x-for="td in ['none','light','heavy']" :key="td">
+              <button
+                class="flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all capitalize"
+                :class="buildForm.tutorDensity === td
+                  ? 'bg-indigo-900 text-indigo-200 border-indigo-600'
+                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'"
+                @click="buildForm.tutorDensity = td"
+                x-text="td"
+              ></button>
+            </template>
+          </div>
+          <div class="text-xs text-slate-500 mt-1">
+            <span x-show="buildForm.tutorDensity === 'none'">De-emphasize tutors in scoring</span>
+            <span x-show="buildForm.tutorDensity === 'light'">Normal tutor weight (1–3)</span>
+            <span x-show="buildForm.tutorDensity === 'heavy'">Tutor-dense — boost tutor scores</span>
+          </div>
+        </div>
+
+        <div class="flex gap-2">
+          <button
+            class="btn-primary flex-1"
+            :disabled="buildLoading || !buildForm.commanderName"
+            @click="runBuild(false)"
+          >
+            <span x-show="!buildLoading">🔨 Card Pool</span>
+            <span x-show="buildLoading && !buildAssembling">Building…</span>
+          </button>
+          <button
+            class="flex-1 py-2.5 px-3 rounded-lg font-semibold text-sm border border-purple-700 bg-purple-950/40 text-purple-300 hover:bg-purple-900/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            :disabled="buildLoading || !buildForm.commanderName"
+            @click="runBuild(true)"
+            title="Build pool then have AI select the final 99 cards"
+          >
+            <span x-show="!buildLoading">✨ Build Full Deck</span>
+            <span x-show="buildLoading && buildAssembling">AI picking…</span>
+          </button>
+        </div>
+        <div class="text-xs text-slate-600 mt-1 text-center">
+          Card Pool = ranked candidates &nbsp;·&nbsp; Full Deck = AI selects 99
+        </div>
+
+        <div x-show="buildError" class="mt-3 p-3 rounded-lg bg-red-950 border border-red-800 text-red-300 text-sm" x-text="buildError"></div>
+      </div>
+
+      <!-- Build results -->
+      <div class="lg:col-span-2">
+        <!-- Loading -->
+        <div x-show="buildLoading" class="flex flex-col items-center justify-center py-24 gap-4">
+          <div class="spinner"></div>
+          <p class="text-slate-400 text-sm">Building card pool…</p>
+        </div>
+
+        <!-- Empty -->
+        <div x-show="!buildResult && !buildLoading" class="flex flex-col items-center justify-center py-24 text-slate-600">
+          <div class="text-5xl mb-4">🔨</div>
+          <p>Configure your deck on the left, then build</p>
+        </div>
+
+        <!-- Results -->
+        <div x-show="buildResult && !buildLoading">
+          <template x-if="buildResult">
+            <div>
+              <!-- Summary bar -->
+              <div class="flex items-center gap-4 mb-5 p-4 rounded-xl bg-slate-900/60 border border-slate-700">
+                <div>
+                  <div class="text-lg font-bold text-slate-100" x-text="buildResult.commander"></div>
+                  <div class="text-sm text-slate-400">
+                    <span x-text="buildResult.archetype || 'General'"></span>
+                    · B<span x-text="buildResult.bracket"></span>
+                    · <span x-text="buildResult.total"></span> cards
+                  </div>
+                  <!-- Show if archetype was remapped -->
+                  <div x-show="buildResult.archetype_input && buildResult.archetype && buildResult.archetype_input.toLowerCase() !== buildResult.archetype"
+                    class="text-xs text-amber-400 mt-0.5">
+                    Interpreted "<span x-text="buildResult.archetype_input"></span>" as <span x-text="buildResult.archetype"></span>
+                  </div>
+                </div>
+                <div class="ml-auto flex items-center gap-2 text-xs flex-wrap justify-end">
+                  <span class="card-pill text-indigo-300"><span x-text="buildResult.core.length"></span> Core</span>
+                  <span class="card-pill text-sky-300"><span x-text="buildResult.support.length"></span> Support</span>
+                  <span class="card-pill text-slate-400"><span x-text="buildResult.flex.length"></span> Flex</span>
+
+                  <!-- Export controls -->
+                  <div class="flex items-center gap-1 ml-2 border-l border-slate-700 pl-2">
+                    <select x-model.number="exportCount"
+                      class="bg-slate-800 border border-slate-700 text-slate-300 rounded px-1.5 py-1 text-xs">
+                      <option value="99">Top 99</option>
+                      <option value="60">Top 60</option>
+                      <option value="0">All cards</option>
+                    </select>
+                    <button
+                      class="btn-secondary flex items-center gap-1 py-1 px-2"
+                      @click="copyToClipboard()"
+                      :title="exportCopied ? 'Copied!' : 'Copy to clipboard'"
+                    >
+                      <span x-text="exportCopied ? '✓ Copied' : '📋 Copy'"></span>
+                    </button>
+                    <button
+                      class="btn-secondary flex items-center gap-1 py-1 px-2"
+                      @click="downloadDeck()"
+                      title="Download as .txt"
+                    >
+                      ⬇ .txt
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Combos -->
+              <div x-show="buildResult.combos.length > 0" class="mb-5 rounded-xl border border-purple-900/50 bg-purple-950/10 p-4">
+                <div class="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-3">
+                  ✨ Available Combos (<span x-text="buildResult.combos.length"></span>)
+                </div>
+                <div class="space-y-2">
+                  <template x-for="combo in buildResult.combos.slice(0,6)" :key="combo.id">
+                    <div class="flex items-start gap-2">
+                      <span class="card-pill mt-0.5" :class="`combo-tag-${combo.tag}`" x-text="combo.tag"></span>
+                      <div>
+                        <div class="text-xs text-slate-300" x-text="combo.cards.join(' + ')"></div>
+                        <div class="text-xs text-slate-500" x-text="combo.result || 'Combo result'"></div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- ── ASSEMBLED DECK (AI) ── -->
+              <template x-if="buildResult.assembled && !buildResult.assembled.error">
+                <div class="mb-5 rounded-xl border border-purple-700/60 bg-purple-950/10 p-4">
+                  <div class="flex items-center justify-between mb-3">
+                    <div class="text-sm font-bold text-purple-300">
+                      ✨ AI-Built Deck
+                      <span class="text-xs font-normal text-purple-500 ml-2"
+                        x-text="`${buildResult.assembled.total} cards`"></span>
+                    </div>
+                    <div class="flex gap-2">
+                      <button class="btn-secondary py-1 px-2 text-xs"
+                        @click="copyAssembled()"
+                        x-text="assembledCopied ? '✓ Copied' : '📋 Copy'"></button>
+                      <button class="btn-secondary py-1 px-2 text-xs"
+                        @click="downloadAssembled()">⬇ .txt</button>
+                    </div>
+                  </div>
+
+                  <!-- Validation warnings -->
+                  <template x-if="buildResult.assembled.validation_warnings && buildResult.assembled.validation_warnings.length > 0">
+                    <div class="mb-3 p-2 rounded-lg bg-yellow-950 border border-yellow-700">
+                      <div class="text-xs font-semibold text-yellow-400 mb-1">⚠ Assembly Warnings</div>
+                      <template x-for="w in buildResult.assembled.validation_warnings" :key="w">
+                        <div class="text-xs text-yellow-300" x-text="w"></div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- Reasoning -->
+                  <p class="text-xs text-slate-300 leading-relaxed mb-4 italic"
+                    x-text="buildResult.assembled.reasoning"></p>
+
+                  <!-- Category breakdown -->
+                  <div class="grid grid-cols-2 gap-3">
+                    <template x-for="cat in assembledCategories()" :key="cat.label">
+                      <div x-show="cat.cards.length > 0">
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                          <span x-text="cat.icon"></span> <span x-text="cat.label"></span>
+                          <span class="text-slate-600 ml-1" x-text="`(${cat.cards.length})`"></span>
+                        </div>
+                        <div class="space-y-0.5">
+                          <template x-for="card in cat.cards" :key="card">
+                            <div class="text-xs text-slate-300 truncate" x-text="card"></div>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Assembled deck error -->
+              <div x-show="buildResult.assembled && buildResult.assembled.error"
+                class="mb-4 p-3 rounded-lg bg-red-950 border border-red-800 text-red-300 text-xs"
+                x-text="'AI assembly failed: ' + (buildResult.assembled && buildResult.assembled.error)">
+              </div>
+
+              <!-- Card tier tabs -->
+              <div class="border-b border-slate-800 flex gap-1 mb-4">
+                <button class="tab-btn text-sm" :class="buildTab==='core' && 'active'" @click="buildTab='core'">
+                  Core (<span x-text="buildResult.core.length"></span>)
+                </button>
+                <button class="tab-btn text-sm" :class="buildTab==='support' && 'active'" @click="buildTab='support'">
+                  Support (<span x-text="buildResult.support.length"></span>)
+                </button>
+                <button class="tab-btn text-sm" :class="buildTab==='flex' && 'active'" @click="buildTab='flex'">
+                  Flex (<span x-text="buildResult.flex.length"></span>)
+                </button>
+              </div>
+
+              <!-- Card list -->
+              <div class="space-y-0.5 max-h-[600px] overflow-y-auto pr-1">
+                <template x-for="card in currentBuildCards()" :key="card.oracle_id">
+                  <div class="card-row flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer"
+                    :class="`tier-${card.tier.toLowerCase()}`">
+                    <!-- Score badge -->
+                    <div class="w-10 text-center text-xs font-bold"
+                      :class="card.score >= 70 ? 'text-indigo-400' : card.score >= 40 ? 'text-sky-400' : 'text-slate-500'"
+                      x-text="card.score.toFixed(0)"
+                    ></div>
+                    <!-- Name -->
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm text-slate-200 truncate">
+                        <span x-text="card.name"></span>
+                        <span x-show="card.is_game_changer" class="gc-badge">GC</span>
+                        <span x-show="card.combo_ids.length > 0" class="card-pill ml-1 combo-tag-P" style="font-size:9px">COMBO</span>
+                      </div>
+                      <div class="text-xs text-slate-500 truncate" x-text="card.type_line"></div>
+                    </div>
+                    <!-- Functions -->
+                    <div class="flex gap-1 flex-shrink-0">
+                      <template x-for="fn in card.functions.slice(0,3)" :key="fn">
+                        <span class="card-pill text-slate-400" x-text="fn"></span>
+                      </template>
+                    </div>
+                    <!-- EDHREC count -->
+                    <div class="w-16 text-right text-xs text-slate-600" x-show="card.edhrec_decks">
+                      <span x-text="formatDecks(card.edhrec_decks)"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- TAB: BROWSE CARDS -->
+  <!-- ============================================================ -->
+  <div x-show="tab==='browse'" class="max-w-6xl mx-auto px-6 py-8">
+
+    <h2 class="text-xl font-bold text-slate-200 mb-4">Browse Cards</h2>
+    <p class="text-slate-400 text-sm mb-6">
+      Explore cards by archetype, bracket, and role. Tutors always appear regardless of role filter.
+    </p>
+
+    <!-- Filters -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Archetype</label>
+        <input x-model="browseFilters.archetype" type="text" placeholder="sacrifice, tokens…"
+          class="w-full px-3 py-2 rounded-lg border text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Bracket</label>
+        <select x-model.number="browseFilters.bracket" class="w-full px-3 py-2 rounded-lg border text-sm">
+          <option value="1">B1 — Exhibition</option>
+          <option value="2">B2 — Core</option>
+          <option value="3" selected>B3 — Upgraded</option>
+          <option value="4">B4 — Optimized</option>
+          <option value="5">B5 — cEDH</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Role</label>
+        <select x-model="browseFilters.role" class="w-full px-3 py-2 rounded-lg border text-sm">
+          <option value="">Any role</option>
+          <option>ramp</option>
+          <option>draw</option>
+          <option>removal</option>
+          <option>tutor</option>
+          <option>board_wipe</option>
+          <option>protection</option>
+          <option>sacrifice</option>
+          <option>token</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Colors</label>
+        <div class="flex gap-1 mt-1">
+          <template x-for="c in ['W','U','B','R','G']" :key="c">
+            <button
+              class="w-8 h-8 rounded-lg font-bold text-sm border transition-all"
+              :class="[
+                c==='W' && 'mana-w',
+                c==='U' && 'mana-u',
+                c==='B' && 'mana-b',
+                c==='R' && 'mana-r',
+                c==='G' && 'mana-g',
+                browseFilters.colors.includes(c) ? 'bg-slate-600 border-slate-400' : 'bg-slate-800 border-slate-700 opacity-40'
+              ]"
+              @click="toggleColor(c)"
+              x-text="c"
+            ></button>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn-primary mb-6" :disabled="browseLoading" @click="runBrowse()">
+      <span x-show="!browseLoading">🔍 Search</span>
+      <span x-show="browseLoading">Searching…</span>
+    </button>
+
+    <!-- Results -->
+    <div x-show="browseLoading" class="flex justify-center py-12">
+      <div class="spinner"></div>
+    </div>
+
+    <div x-show="browseResults.length > 0 && !browseLoading">
+      <div class="text-xs text-slate-500 mb-3">
+        Showing <span x-text="browseResults.length"></span> cards
+        <span x-show="browseFilters.archetype"> for archetype "<span x-text="browseFilters.archetype"></span>"</span>
+      </div>
+      <div class="space-y-0.5">
+        <template x-for="card in browseResults" :key="card.oracle_id">
+          <div class="card-row flex items-center gap-3 px-3 py-2.5 rounded-lg">
+            <div class="w-10 text-center text-xs font-bold text-indigo-400" x-text="card.score.toFixed(0)"></div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm text-slate-200 truncate">
+                <span x-text="card.name"></span>
+                <span x-show="card.is_game_changer" class="gc-badge">GC</span>
+              </div>
+              <div class="text-xs text-slate-500 truncate" x-text="card.type_line"></div>
+            </div>
+            <div class="flex gap-1 flex-wrap justify-end flex-shrink-0 max-w-[180px]">
+              <template x-for="fn in card.functions.slice(0,4)" :key="fn">
+                <span class="card-pill text-slate-400" x-text="fn"></span>
+              </template>
+            </div>
+            <div class="w-14 text-right text-xs" x-show="card.archetype_score">
+              <span class="text-yellow-500" x-text="`⭐ ${card.archetype_score}`"></span>
+            </div>
+            <div class="w-16 text-right text-xs text-slate-600" x-show="card.edhrec_decks">
+              <span x-text="formatDecks(card.edhrec_decks)"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div x-show="!browseLoading && browseResults.length === 0 && browseDone" class="text-center py-12 text-slate-600">
+      No results. Try broadening your filters.
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- TAB: FIND COMMANDERS -->
+  <!-- ============================================================ -->
+  <div x-show="tab==='commanders'" class="max-w-4xl mx-auto px-6 py-8">
+
+    <h2 class="text-xl font-bold text-slate-200 mb-4">Find Commanders</h2>
+    <p class="text-slate-400 text-sm mb-6">
+      Know what you want to build, but not who to build it around?
+    </p>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div class="md:col-span-2">
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Archetype / Theme</label>
+        <input x-model="cmdFilters.archetype" type="text" placeholder="sacrifice, tribal, tokens…"
+          class="w-full px-3 py-2 rounded-lg border text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Colors</label>
+        <div class="flex gap-1 mt-1">
+          <template x-for="c in ['W','U','B','R','G']" :key="c">
+            <button
+              class="w-7 h-7 rounded font-bold text-xs border transition-all"
+              :class="[
+                c==='W' && 'mana-w', c==='U' && 'mana-u', c==='B' && 'mana-b', c==='R' && 'mana-r', c==='G' && 'mana-g',
+                cmdFilters.colors.includes(c) ? 'bg-slate-600 border-slate-400' : 'bg-slate-800 border-slate-700 opacity-40'
+              ]"
+              @click="toggleCmdColor(c)"
+              x-text="c"
+            ></button>
+          </template>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Max Colors</label>
+        <select x-model.number="cmdFilters.maxColors" class="w-full px-3 py-2 rounded-lg border text-sm">
+          <option value="">Any</option>
+          <option value="1">Mono</option>
+          <option value="2">2-color</option>
+          <option value="3">3-color</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn-primary mb-6" :disabled="cmdLoading || !cmdFilters.archetype" @click="runFindCommanders()">
+      <span x-show="!cmdLoading">👑 Find Commanders</span>
+      <span x-show="cmdLoading">Searching…</span>
+    </button>
+
+    <div x-show="cmdLoading" class="flex justify-center py-12">
+      <div class="spinner"></div>
+    </div>
+
+    <div x-show="cmdResults.length > 0 && !cmdLoading" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <template x-for="cmd in cmdResults" :key="cmd.oracle_id">
+        <div
+          class="rounded-xl border border-slate-700 bg-slate-900/60 p-4 cursor-pointer hover:border-indigo-600 transition-colors"
+          @click="goToBuild(cmd)"
+        >
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <div class="font-semibold text-slate-100 text-sm" x-text="cmd.name"></div>
+              <div class="text-xs text-slate-500 mt-0.5" x-text="cmd.type_line"></div>
+            </div>
+            <div class="flex gap-1 flex-shrink-0">
+              <template x-for="c in (cmd.color_identity.length ? cmd.color_identity : ['C'])" :key="c">
+                <span class="w-5 h-5 rounded text-center text-xs font-bold leading-5"
+                  :class="[c==='W'&&'mana-w bg-yellow-950/50', c==='U'&&'mana-u bg-blue-950/50', c==='B'&&'mana-b bg-purple-950/50', c==='R'&&'mana-r bg-red-950/50', c==='G'&&'mana-g bg-green-950/50', c==='C'&&'mana-c bg-slate-800']"
+                  x-text="c"
+                ></span>
+              </template>
+            </div>
+          </div>
+          <div class="mt-3 flex items-center gap-3">
+            <div class="flex-1">
+              <div class="text-xs text-slate-500 mb-1">Archetype fit</div>
+              <div class="role-bar">
+                <div class="role-bar-fill bg-indigo-500" :style="`width: ${(cmd.archetype_score / 5) * 100}%`"></div>
+              </div>
+            </div>
+            <div class="text-xs font-bold text-indigo-400" x-text="`${cmd.archetype_score}/5`"></div>
+          </div>
+          <div class="mt-2 flex items-center gap-2">
+            <div class="text-xs text-slate-600" x-show="cmd.edhrec_decks">
+              <span x-text="formatDecks(cmd.edhrec_decks)"></span> decks on EDHREC
+            </div>
+            <div x-show="cmd.partner_label" class="card-pill text-purple-300" x-text="cmd.partner_label"></div>
+          </div>
+          <div class="mt-1 text-xs text-indigo-500">Click to build →</div>
+        </div>
+      </template>
+    </div>
+
+    <div x-show="!cmdLoading && cmdResults.length === 0 && cmdDone" class="text-center py-12 text-slate-600">
+      No commanders found. Check your archetype spelling or broaden colors.
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- Alpine.js app logic -->
+<!-- ============================================================ -->
+<script>
+function app() {
+  return {
+    tab: 'evaluate',
+    showUnclassified: false,
+
+    // ---- Evaluate ----
+    evalForm: { decklist: '', deckName: 'My Deck' },
+    evalResult: null,
+    evalLoading: false,
+    evalError: null,
+
+    async runEvaluate() {
+      this.evalLoading = true;
+      this.evalError = null;
+      this.evalResult = null;
+      try {
+        const resp = await fetch('/api/evaluate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            decklist: this.evalForm.decklist,
+            deck_name: this.evalForm.deckName || 'My Deck',
+          }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          this.evalError = err.detail || 'Evaluation failed';
+        } else {
+          this.evalResult = await resp.json();
+        }
+      } catch (e) {
+        this.evalError = `Network error: ${e.message}`;
+      } finally {
+        this.evalLoading = false;
+      }
+    },
+
+    // ---- Build ----
+    buildForm: {
+      commanderQuery: '',
+      commanderName: '',
+      commanderOracleId: '',
+      partnerName: '',
+      useSolo: false,           // true = explicitly solo even if partner available
+      bracket: 3,
+      archetype: '',
+      wantCombos: true,
+      tutorDensity: 'light',
+    },
+    buildResult: null,
+    buildLoading: false,
+    buildAssembling: false,
+    buildError: null,
+    buildTab: 'core',
+    exportCount: 99,
+    exportCopied: false,
+    assembledCopied: false,
+    commanderSuggestions: [],
+    commanderArchetypes: [],
+    commanderPartnerInfo: null,   // null = no partner mechanic; object = partner info
+    validPartners: [],            // list of valid partner cards
+    partnerSearch: '',
+    showCommanderDropdown: false,
+
+    bracketName(b) {
+      return ['', 'B1 — Exhibition (casual theme)', 'B2 — Core (precon level)',
+        'B3 — Upgraded (focused synergy)', 'B4 — Optimized (fast/consistent)',
+        'B5 — cEDH (competitive)'][b];
+    },
+
+    async searchCommanders() {
+      if (this.buildForm.commanderQuery.length < 2) { this.commanderSuggestions = []; return; }
+      const resp = await fetch(`/api/search/commanders?q=${encodeURIComponent(this.buildForm.commanderQuery)}&limit=8`);
+      if (resp.ok) this.commanderSuggestions = await resp.json();
+      this.showCommanderDropdown = true;
+    },
+
+    async selectCommander(c) {
+      this.buildForm.commanderName = c.name;
+      this.buildForm.commanderOracleId = c.oracle_id;
+      this.buildForm.commanderQuery = c.name;
+      this.buildForm.partnerName = '';
+      this.buildForm.useSolo = false;
+      this.showCommanderDropdown = false;
+      this.commanderPartnerInfo = null;
+      this.validPartners = [];
+      this.partnerSearch = '';
+
+      // Load full commander info (archetypes + partner mechanic) in one call
+      const resp = await fetch(`/api/commander-info/${c.oracle_id}`);
+      if (resp.ok) {
+        const info = await resp.json();
+        this.commanderArchetypes = info.archetypes || [];
+        this.commanderPartnerInfo = info.partner_info; // null if no partner mechanic
+
+        // If there's a partner mechanic, pre-load valid partners
+        if (info.partner_info) {
+          const pr = await fetch(`/api/partners/${c.oracle_id}`);
+          if (pr.ok) {
+            const pd = await pr.json();
+            this.validPartners = pd.valid_partners || [];
+            // Auto-select named partner
+            if (info.partner_info.type === 'named_partner' && info.partner_info.named_partner) {
+              this.buildForm.partnerName = info.partner_info.named_partner;
+            }
+          }
+        }
+      } else {
+        // Fallback: just archetypes
+        const ar = await fetch(`/api/archetypes?commander_name=${encodeURIComponent(c.name)}`);
+        if (ar.ok) this.commanderArchetypes = await ar.json();
+      }
+    },
+
+    filteredPartners() {
+      if (!this.validPartners.length) return [];
+      const q = this.partnerSearch.toLowerCase();
+      if (!q) return this.validPartners;
+      return this.validPartners.filter(p => p.name.toLowerCase().includes(q));
+    },
+
+    async runBuild(assemble = false) {
+      this.buildLoading = true;
+      this.buildAssembling = assemble;
+      this.buildError = null;
+      this.buildResult = null;
+      try {
+        const partnerName = (!this.buildForm.useSolo && this.buildForm.partnerName)
+          ? this.buildForm.partnerName : null;
+
+        const resp = await fetch('/api/build', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            commander_name: this.buildForm.commanderName,
+            partner_name: partnerName,
+            bracket: this.buildForm.bracket,
+            archetype: this.buildForm.archetype || null,
+            want_combos: this.buildForm.wantCombos,
+            tutor_density: this.buildForm.tutorDensity,
+            pool_size: 200,
+            assemble: assemble,
+          }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          this.buildError = err.detail || 'Build failed';
+        } else {
+          this.buildResult = await resp.json();
+          this.buildTab = 'core';
+        }
+      } catch (e) {
+        this.buildError = `Network error: ${e.message}`;
+      } finally {
+        this.buildLoading = false;
+      }
+    },
+
+    currentBuildCards() {
+      if (!this.buildResult) return [];
+      return this.buildResult[this.buildTab] || [];
+    },
+
+    goToBuild(cmd) {
+      this.tab = 'build';
+      this.selectCommander(cmd);
+    },
+
+    // ---- Assembled deck helpers ----
+    assembledCategories() {
+      if (!this.buildResult?.assembled) return [];
+      const a = this.buildResult.assembled;
+      return [
+        { label: 'Lands',   icon: '🌍', cards: a.lands   || [] },
+        { label: 'Ramp',    icon: '⚡', cards: a.ramp    || [] },
+        { label: 'Draw',    icon: '🃏', cards: a.draw    || [] },
+        { label: 'Removal', icon: '🗡️', cards: a.removal || [] },
+        { label: 'Synergy', icon: '🔗', cards: a.synergy || [] },
+        { label: 'Combo',   icon: '♾️', cards: a.combo   || [] },
+        { label: 'Other',   icon: '📌', cards: a.other   || [] },
+      ];
+    },
+
+    async copyAssembled() {
+      const text = this.buildResult?.assembled?.moxfield_text || '';
+      try { await navigator.clipboard.writeText(text); } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
+      this.assembledCopied = true;
+      setTimeout(() => { this.assembledCopied = false; }, 2500);
+    },
+
+    downloadAssembled() {
+      const text = this.buildResult?.assembled?.moxfield_text || '';
+      const r = this.buildResult;
+      const slug = r.commander.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${slug}-b${r.bracket}-full-deck.txt`;
+      a.click(); URL.revokeObjectURL(url);
+    },
+
+    // ---- Export ----
+    buildExportText() {
+      if (!this.buildResult) return '';
+      const r = this.buildResult;
+
+      // Collect all non-commander cards ranked by score, then slice
+      const all = [
+        ...r.core.map(c => ({...c, tier: 'CORE'})),
+        ...r.support.map(c => ({...c, tier: 'SUPPORT'})),
+        ...r.flex.map(c => ({...c, tier: 'FLEX'})),
+      ];
+      const limit = this.exportCount > 0 ? this.exportCount : all.length;
+      const deck = all.slice(0, limit);
+
+      // Group by tier for annotated sections
+      const byTier = { CORE: [], SUPPORT: [], FLEX: [] };
+      for (const c of deck) byTier[c.tier].push(c.name);
+
+      // Commander line(s)
+      const cmdParts = r.commander.split(' + ');
+      let out = 'Commander\n';
+      for (const cmd of cmdParts) out += `1 ${cmd.trim()}\n`;
+      out += '\nDeck\n';
+
+      if (byTier.CORE.length) {
+        out += `// ── Core (${byTier.CORE.length}) ──\n`;
+        for (const n of byTier.CORE) out += `1 ${n}\n`;
+      }
+      if (byTier.SUPPORT.length) {
+        out += `\n// ── Support (${byTier.SUPPORT.length}) ──\n`;
+        for (const n of byTier.SUPPORT) out += `1 ${n}\n`;
+      }
+      if (byTier.FLEX.length) {
+        out += `\n// ── Flex (${byTier.FLEX.length}) ──\n`;
+        for (const n of byTier.FLEX) out += `1 ${n}\n`;
+      }
+
+      // Reminder if truncated
+      if (limit < all.length) {
+        out += `\n// Exported top ${limit} of ${all.length} cards. Adjust "Top N" to export more.\n`;
+      }
+
+      return out;
+    },
+
+    async copyToClipboard() {
+      const text = this.buildExportText();
+      try {
+        await navigator.clipboard.writeText(text);
+        this.exportCopied = true;
+        setTimeout(() => { this.exportCopied = false; }, 2500);
+      } catch {
+        // Fallback for browsers without clipboard API
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        this.exportCopied = true;
+        setTimeout(() => { this.exportCopied = false; }, 2500);
+      }
+    },
+
+    downloadDeck() {
+      const text = this.buildExportText();
+      const r = this.buildResult;
+      const slug = r.commander.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      const filename = `${slug}-b${r.bracket}.txt`;
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    // ---- Browse ----
+    browseFilters: { archetype: '', bracket: 3, role: '', colors: [] },
+    browseResults: [],
+    browseLoading: false,
+    browseDone: false,
+
+    toggleColor(c) {
+      const i = this.browseFilters.colors.indexOf(c);
+      if (i >= 0) this.browseFilters.colors.splice(i, 1);
+      else this.browseFilters.colors.push(c);
+    },
+
+    async runBrowse() {
+      this.browseLoading = true;
+      this.browseDone = false;
+      const p = new URLSearchParams({
+        bracket: this.browseFilters.bracket,
+        limit: 50,
+      });
+      if (this.browseFilters.archetype) p.set('archetype', this.browseFilters.archetype);
+      if (this.browseFilters.role) p.set('role', this.browseFilters.role);
+      if (this.browseFilters.colors.length) p.set('colors', this.browseFilters.colors.join(','));
+      const resp = await fetch(`/api/browse?${p}`);
+      if (resp.ok) this.browseResults = await resp.json();
+      this.browseLoading = false;
+      this.browseDone = true;
+    },
+
+    // ---- Find Commanders ----
+    cmdFilters: { archetype: '', colors: [], maxColors: '' },
+    cmdResults: [],
+    cmdLoading: false,
+    cmdDone: false,
+
+    toggleCmdColor(c) {
+      const i = this.cmdFilters.colors.indexOf(c);
+      if (i >= 0) this.cmdFilters.colors.splice(i, 1);
+      else this.cmdFilters.colors.push(c);
+    },
+
+    async runFindCommanders() {
+      this.cmdLoading = true;
+      this.cmdDone = false;
+      const p = new URLSearchParams({ archetype: this.cmdFilters.archetype, limit: 20 });
+      if (this.cmdFilters.colors.length) p.set('colors', this.cmdFilters.colors.join(','));
+      if (this.cmdFilters.maxColors) p.set('max_colors', this.cmdFilters.maxColors);
+      const resp = await fetch(`/api/commanders?${p}`);
+      if (resp.ok) this.cmdResults = await resp.json();
+      this.cmdLoading = false;
+      this.cmdDone = true;
+    },
+
+    // ---- Helpers ----
+    formatDecks(n) {
+      if (!n) return '';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+      return n.toString();
+    },
+  };
+}
+</script>
+
+</body>
+</html>
