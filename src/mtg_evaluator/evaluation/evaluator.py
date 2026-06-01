@@ -4,6 +4,11 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from mtg_evaluator.card_functions import (
+    normalize_function,
+    normalize_functions,
+    role_bucket,
+)
 from mtg_evaluator.db.models import (
     Card,
     CardClassification,
@@ -296,7 +301,9 @@ def _get_classifications(session: Session, oracle_ids: list[str]) -> dict[str, d
             (o for o, c in cls_by_oracle.items() if c == row.classification_id), None
         )
         if oracle_id:
-            result[oracle_id]["functions"].append(row.function_name)
+            fn = normalize_function(row.function_name)
+            if fn and fn not in result[oracle_id]["functions"]:
+                result[oracle_id]["functions"].append(fn)
 
     for row in session.execute(
         select(
@@ -400,18 +407,13 @@ def _compute_synergy_score(
 def _role_coverage(classifications: dict[str, dict]) -> list[RoleCoverage]:
     function_counts: dict[str, int] = {}
     for cls in classifications.values():
-        for fn in cls["functions"]:
-            function_counts[fn] = function_counts.get(fn, 0) + 1
+        card_roles = {role_bucket(fn) for fn in normalize_functions(cls["functions"])}
+        for role in card_roles:
+            function_counts[role] = function_counts.get(role, 0) + 1
 
     coverage = []
     for role, minimum in _ROLE_MINIMUMS.items():
-        if role == "removal":
-            # Merge targeted removal + creature_removal into one bucket
-            count = function_counts.get("removal", 0) + function_counts.get(
-                "creature_removal", 0
-            )
-        else:
-            count = function_counts.get(role, 0)
+        count = function_counts.get(role_bucket(role), 0)
         coverage.append(RoleCoverage(function=role, count=count, minimum=minimum))
 
     return coverage

@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from mtg_evaluator.card_functions import role_bucket
 from mtg_evaluator.deckbuilding.commander_profile import CommanderProfileData
 
 # Base targets by bracket — starting point before any modifiers.
@@ -181,6 +182,7 @@ class RoleTargets:
     modifiers_applied: list[str] = field(default_factory=list)
 
     def get(self, role: str, default: int = 0) -> int:
+        role = role_bucket(role)
         return getattr(self, role, self.extra.get(role, default))
 
     def to_dict(self) -> dict[str, int]:

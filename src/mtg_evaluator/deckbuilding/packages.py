@@ -15,6 +15,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from mtg_evaluator.card_functions import (
+    function_group,
+    has_function,
+    normalize_function,
+    normalize_functions,
+)
+
 # ---------------------------------------------------------------------------
 # Archetype package definitions
 # ---------------------------------------------------------------------------
@@ -30,6 +37,11 @@ class PackageDefinition:
     min_enablers: int  # minimum enablers for package to function
     min_payoffs: int  # minimum payoffs for package to function
     ideal_enabler_payoff_ratio: float  # enablers:payoffs ideal ratio
+
+    def __post_init__(self) -> None:
+        self.enabler_functions = normalize_functions(self.enabler_functions)
+        self.payoff_functions = normalize_functions(self.payoff_functions)
+        self.support_functions = normalize_functions(self.support_functions)
 
 
 ARCHETYPE_PACKAGES: dict[str, PackageDefinition] = {
@@ -213,7 +225,7 @@ def check_package_health(
         return None
 
     pkg = ARCHETYPE_PACKAGES[archetype]
-    fn_set = all_functions  # flat list, may have duplicates (one per card role)
+    fn_set = normalize_functions(all_functions, dedupe=False)
 
     enablers = sum(1 for f in fn_set if f in pkg.enabler_functions)
     payoffs = sum(1 for f in fn_set if f in pkg.payoff_functions)
@@ -299,11 +311,18 @@ def detect_nonbos(
 ) -> list[NonboWarning]:
     """Rule-based nonbo detection. Returns warnings, not hard bans."""
     warnings = []
-    fn_set = set(all_functions)
+    normalized_functions = normalize_functions(all_functions, dedupe=False)
+    fn_set = set(normalized_functions)
+    all_card_functions = {
+        card: normalize_functions(fns) for card, fns in all_card_functions.items()
+    }
 
     # 1. Graveyard hate in a graveyard deck
     if archetype in ("graveyard", "reanimator"):
-        gy_hate_fns = {"exile_graveyard", "graveyard_hate", "relic_effect"}
+        gy_hate_fns = {
+            normalize_function(f)
+            for f in ("exile_graveyard", "graveyard_hate", "relic_effect")
+        }
         for card, fns in all_card_functions.items():
             if any(f in gy_hate_fns for f in fns):
                 warnings.append(
@@ -341,7 +360,7 @@ def detect_nonbos(
 
     # 4. Tapland overload in fast-start archetype
     if archetype in ("combo", "stax") and land_count > 0:
-        tapland_fns = [f for f in all_functions if f == "tapland"]
+        tapland_fns = [f for f in normalized_functions if f == "tapland"]
         tapland_approx = sum(
             1
             for n in all_card_names
@@ -370,10 +389,15 @@ def detect_nonbos(
 
     # 5. Payoffs without enablers (archetype-specific)
     if archetype in ("reanimator", "graveyard"):
-        has_enablers = any(
-            f in fn_set for f in ("self_mill", "discard_outlet", "entomb", "looting")
-        )
-        has_payoffs = any(f in fn_set for f in ("reanimation", "graveyard_payoff"))
+        enabler_fns = {
+            normalize_function(f)
+            for f in ("self_mill", "discard_outlet", "entomb", "looting")
+        }
+        payoff_fns = {
+            normalize_function(f) for f in ("reanimation", "graveyard_payoff")
+        }
+        has_enablers = bool(fn_set.intersection(enabler_fns))
+        has_payoffs = bool(fn_set.intersection(payoff_fns))
         if has_payoffs and not has_enablers:
             warnings.append(
                 NonboWarning(
@@ -385,17 +409,18 @@ def detect_nonbos(
             )
 
     if archetype in ("tokens", "aristocrats"):
-        has_payoffs = any(
-            f in fn_set
+        payoff_fns = {
+            normalize_function(f)
             for f in (
                 "anthem",
                 "death_trigger",
                 "sacrifice_payoff",
                 "aristocrat_payoff",
             )
-        )
-        has_enablers = any(
-            f in fn_set for f in ("token_maker", "sac_outlet", "sacrifice_outlet")
+        }
+        has_payoffs = bool(fn_set.intersection(payoff_fns))
+        has_enablers = has_function(fn_set, "token_maker") or has_function(
+            fn_set, "sacrifice_outlet"
         )
         if has_payoffs and not has_enablers:
             warnings.append(
@@ -409,10 +434,15 @@ def detect_nonbos(
 
     # 6. Enablers without finishers
     if archetype in ("combo", "spellslinger"):
-        has_enablers = any(f in fn_set for f in ("tutor", "cantrip", "combo_piece"))
-        has_finisher = any(
-            f in fn_set for f in ("combo_payoff", "finisher", "wincon", "storm_payoff")
-        )
+        enabler_fns = {
+            normalize_function(f) for f in ("tutor", "cantrip", "combo_piece")
+        }
+        finisher_fns = {
+            *function_group("finisher"),
+            *(normalize_function(f) for f in ("combo_payoff", "storm_payoff")),
+        }
+        has_enablers = bool(fn_set.intersection(enabler_fns))
+        has_finisher = bool(fn_set.intersection(finisher_fns))
         if has_enablers and not has_finisher:
             warnings.append(
                 NonboWarning(

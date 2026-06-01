@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import re
 
+from mtg_evaluator.card_functions import normalize_functions, role_bucket
+
 # Removal quality signals in oracle text
 _EXILE_PATTERNS = re.compile(r"\bexile\b", re.IGNORECASE)
 _DESTROY_PATTERNS = re.compile(r"\bdestroy\b", re.IGNORECASE)
@@ -39,6 +41,7 @@ _ADD_MANA_ANY = re.compile(r"add.*mana of any (color|type)", re.IGNORECASE)
 
 def _cmc_efficiency(cmc: float, role: str) -> float:
     """CMC modifier: lower is generally better, but role matters."""
+    role = role_bucket(role)
     # Different roles have different CMC sweet spots
     if role in ("ramp",):
         # 0-1 mana ramp is exceptional; 4+ is usually bad
@@ -53,7 +56,7 @@ def _cmc_efficiency(cmc: float, role: str) -> float:
         if cmc == 4:
             return -0.5
         return -1.2
-    elif role in ("removal", "counter", "protection"):
+    elif role in ("removal", "counterspell", "protection"):
         if cmc == 0:
             return 1.5
         if cmc == 1:
@@ -118,6 +121,8 @@ def compute_role_quality(
     Returns a 0-5 quality score for a card filling the given role.
     Higher is better. 2.5 is baseline neutral.
     """
+    role = role_bucket(role)
+    functions = normalize_functions(functions)
     text = oracle_text or ""
     base = 2.5
 
@@ -125,9 +130,9 @@ def compute_role_quality(
     base += _cmc_efficiency(cmc, role)
 
     # Timing bonus (instant > sorcery for interaction)
-    if role in ("removal", "counter", "protection", "draw") and is_instant:
+    if role in ("removal", "counterspell", "protection", "draw") and is_instant:
         base += 0.5
-    elif role in ("removal", "counter", "protection") and is_sorcery:
+    elif role in ("removal", "counterspell", "protection") and is_sorcery:
         base -= 0.2  # sorcery interaction is slower
 
     # Removal scope: exile > destroy > bounce
@@ -195,6 +200,7 @@ def best_role_quality(
     """
     if not functions:
         return 0.0
+    functions = normalize_functions(functions)
     return max(
         compute_role_quality(
             role, cmc, is_instant, is_sorcery, functions, is_game_changer, oracle_text

@@ -28,6 +28,7 @@ from typing import Literal, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from mtg_evaluator.card_functions import has_function, normalize_functions, role_bucket
 from mtg_evaluator.db.models import (
     Card,
     CardClassification,
@@ -68,17 +69,9 @@ Tier = Literal["CORE", "COMBO", "SUPPORT", "FLEX"]
 _BRACKET_KEY = {1: "casual", 2: "bracket_2", 3: "bracket_3", 4: "bracket_4", 5: "cedh"}
 
 # Roles counted for interaction (removal + board wipes + counters)
-_INTERACTION_ROLES = {"removal", "creature_removal", "board_wipe", "counter"}
+_INTERACTION_ROLES = {"removal", "board_wipe", "counterspell"}
 # Roles that count toward "needed role" scoring
-_NEEDED_ROLES = {
-    "ramp",
-    "draw",
-    "removal",
-    "creature_removal",
-    "board_wipe",
-    "protection",
-    "tutor",
-}
+_NEEDED_ROLES = {"ramp", "draw", "removal", "board_wipe", "protection", "tutor"}
 
 
 @dataclass
@@ -185,11 +178,11 @@ def _commander_fit_bonus(
         return 0.0
 
     score = 0.0
-    fn_set = set(functions)
+    fn_set = set(normalize_functions(functions))
 
     # Commander needs creatures → creatures score higher
-    if profile.needs_creatures and any(
-        f in fn_set for f in ("creature", "token_maker", "tokens")
+    if profile.needs_creatures and (
+        "creature" in fn_set or has_function(fn_set, "token_maker")
     ):
         score += 0.4
     # Commander needs artifacts
@@ -236,7 +229,7 @@ def _package_bonus(
     if not pkg:
         return 0.0
 
-    fn_set = set(functions)
+    fn_set = set(normalize_functions(functions))
     if any(f in fn_set for f in pkg.enabler_functions):
         return 0.7
     if any(f in fn_set for f in pkg.payoff_functions):
@@ -431,7 +424,7 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         if is_gc and request.bracket < 3:
             continue
 
-        functions = fn_map.get(row.oracle_id, [])
+        functions = normalize_functions(fn_map.get(row.oracle_id, []))
         in_combo = row.oracle_id in combo_oracle_union
         popularity = _log_popularity(row.num_decks)
 
@@ -456,7 +449,9 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             rq = 0.0  # lands don't have a role quality
         else:
             # Role quality (replaces binary fills_role)
-            fills_needed_role = bool(_NEEDED_ROLES.intersection(functions))
+            fills_needed_role = any(
+                role_bucket(fn) in _NEEDED_ROLES for fn in functions
+            )
             rq = (
                 best_role_quality(
                     functions,
@@ -485,7 +480,7 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             )
 
             # Tutor density modifier
-            is_tutor = "tutor" in functions
+            is_tutor = has_function(functions, "tutor")
             if is_tutor:
                 score = round(score * tutor_multiplier, 2)
 
@@ -553,13 +548,18 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     role_counts_in_core: dict[str, int] = {}
     for card in pool.core:
         for fn in card.functions:
-            if fn in _NEEDED_ROLES:
-                role_counts_in_core[fn] = role_counts_in_core.get(fn, 0) + 1
+            bucket = role_bucket(fn)
+            if bucket in _NEEDED_ROLES:
+                role_counts_in_core[bucket] = role_counts_in_core.get(bucket, 0) + 1
 
     for card in pool.support + pool.flex:
         if card.functions:
             best_role = max(
-                (f for f in card.functions if f in _NEEDED_ROLES),
+                (
+                    role_bucket(f)
+                    for f in card.functions
+                    if role_bucket(f) in _NEEDED_ROLES
+                ),
                 key=lambda f: role_counts_in_core.get(f, 0),
                 default=None,
             )
@@ -598,8 +598,10 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     # --- Nonbo detection ---
     all_card_functions_map = {c.name: c.functions for c in pool.all_cards}
     all_card_names = [c.name for c in pool.all_cards]
-    ramp_count = sum(1 for c in pool.all_cards if "ramp" in c.functions)
-    board_wipe_count = sum(1 for c in pool.all_cards if "board_wipe" in c.functions)
+    ramp_count = sum(1 for c in pool.all_cards if has_function(c.functions, "ramp"))
+    board_wipe_count = sum(
+        1 for c in pool.all_cards if has_function(c.functions, "board_wipe")
+    )
     creature_count = sum(1 for c in pool.all_cards if "creature" in c.type_line.lower())
 
     pool.nonbo_warnings = detect_nonbos(
@@ -617,7 +619,9 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     # --- Consistency math ---
     land_count_in_pool = sum(1 for c in pool.all_cards if "land" in c.type_line.lower())
     interaction_count = sum(
-        1 for c in pool.all_cards if any(f in _INTERACTION_ROLES for f in c.functions)
+        1
+        for c in pool.all_cards
+        if any(role_bucket(f) in _INTERACTION_ROLES for f in c.functions)
     )
     enabler_count = 0
     payoff_count = 0
@@ -629,12 +633,16 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             enabler_count = sum(
                 1
                 for c in pool.all_cards
-                if any(f in pkg.enabler_functions for f in c.functions)
+                if any(
+                    f in pkg.enabler_functions for f in normalize_functions(c.functions)
+                )
             )
             payoff_count = sum(
                 1
                 for c in pool.all_cards
-                if any(f in pkg.payoff_functions for f in c.functions)
+                if any(
+                    f in pkg.payoff_functions for f in normalize_functions(c.functions)
+                )
             )
 
     pool.consistency = compute_consistency(

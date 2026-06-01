@@ -12,6 +12,7 @@ from mtg_evaluator.classification.base import BaseClassifier
 from mtg_evaluator.classification.card_input import CardInput
 from mtg_evaluator.classification.schema import CardClassification
 from mtg_evaluator.classification.validator import validate_classification
+from mtg_evaluator.card_functions import normalize_functions
 from mtg_evaluator.config import settings
 from mtg_evaluator.db.connection import get_session
 from mtg_evaluator.db.models import (
@@ -105,7 +106,7 @@ def _store_classification(
     session.flush()
 
     if is_valid and classification:
-        for fn in classification.functions:
+        for fn in normalize_functions(classification.functions):
             session.add(
                 CardFunction(
                     oracle_id=job.oracle_id,

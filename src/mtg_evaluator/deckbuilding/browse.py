@@ -16,6 +16,11 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from mtg_evaluator.card_functions import (
+    has_function,
+    normalize_function,
+    normalize_functions,
+)
 from mtg_evaluator.db.models import (
     Card,
     CardClassification,
@@ -60,6 +65,7 @@ def browse_cards(
     at B3+ since they're valid there.
     """
     bracket_key = _BRACKET_KEY.get(bracket, "bracket_3")
+    role = normalize_function(role) if role else None
 
     cls_subq = (
         select(CardClassification.id, CardClassification.oracle_id)
@@ -134,12 +140,12 @@ def browse_cards(
         if is_gc and bracket < 3:
             continue
 
-        functions = fn_map.get(row.oracle_id, [])
+        functions = normalize_functions(fn_map.get(row.oracle_id, []))
 
         # Role filter — tutors always pass regardless of role filter
-        is_tutor = "tutor" in functions
+        is_tutor = has_function(functions, "tutor")
         if role and not is_tutor:
-            if role not in functions:
+            if not has_function(functions, role):
                 continue
 
         popularity = _log_popularity(row.num_decks)

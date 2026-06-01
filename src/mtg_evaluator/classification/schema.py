@@ -3,7 +3,9 @@ from __future__ import annotations
 import enum
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from mtg_evaluator.card_functions import normalize_functions
 
 
 class CardFunctionEnum(str, enum.Enum):
@@ -176,3 +178,8 @@ class CardClassification(BaseModel):
     warnings: list[Warning]
 
     model_config = {"use_enum_values": True}
+
+    @field_validator("functions", mode="before")
+    @classmethod
+    def _normalize_functions(cls, value):
+        return normalize_functions(value)
