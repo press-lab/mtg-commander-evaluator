@@ -33,7 +33,11 @@ from mtg_evaluator.deckbuilding.consistency import (
     ConsistencyReport,
     compute_consistency,
 )
-from mtg_evaluator.deckbuilding.mana_analysis import ManaAnalysis, analyze_mana_base
+from mtg_evaluator.deckbuilding.mana_analysis import (
+    LandManaData,
+    ManaAnalysis,
+    analyze_mana_base,
+)
 from mtg_evaluator.deckbuilding.packages import (
     ARCHETYPE_PACKAGES,
     NonboWarning,
@@ -366,6 +370,14 @@ def _analyze_assembled_deck(deck: AssembledDeck, pool: CardPool) -> None:
         card_functions[card.name] = functions
 
     land_names = [name for name in deck.lands if name in cards_by_name]
+    land_metadata = {
+        card.name: LandManaData(
+            produced_mana=tuple(card.produced_mana),
+            oracle_text=card.oracle_text,
+        )
+        for card in selected_cards
+        if "land" in card.type_line.lower()
+    }
     ramp_count = sum(
         1 for card in selected_cards if has_function(card.functions, "ramp")
     )
@@ -410,6 +422,7 @@ def _analyze_assembled_deck(deck: AssembledDeck, pool: CardPool) -> None:
         commander_cmc=pool.commander_cmc,
         deck_color_identity=pool.color_identity,
         partner_mana_cost=pool.partner_mana_cost,
+        land_metadata=land_metadata,
     )
     deck.consistency = compute_consistency(
         land_count=len(land_names),

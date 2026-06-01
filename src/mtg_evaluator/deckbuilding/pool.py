@@ -39,7 +39,7 @@ from mtg_evaluator.db.models import (
     SpellbookCombo,
     SpellbookComboCard,
 )
-from mtg_evaluator.evaluation.evaluator import GAME_CHANGERS
+from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS
 from mtg_evaluator.deckbuilding.request import DeckRequest
 from mtg_evaluator.deckbuilding.archetypes import normalize_archetype
 from mtg_evaluator.deckbuilding.lands import land_score
@@ -47,7 +47,10 @@ from mtg_evaluator.deckbuilding.commander_profile import (
     CommanderProfileData,
     get_or_generate_profile,
 )
-from mtg_evaluator.deckbuilding.role_quality import best_role_quality
+from mtg_evaluator.deckbuilding.role_quality import (
+    need_weighted_role_quality,
+    role_quality_map,
+)
 from mtg_evaluator.deckbuilding.role_targets import (
     RoleTargets,
     compute_role_targets,
@@ -82,13 +85,16 @@ class PoolCard:
     score: float  # 0-100 composite
     archetype_score: Optional[float]
     bracket_score: Optional[float]
-    role_quality: float  # 0-5 quality score for best role (replaces binary)
+    role_quality: float  # 0-5 need-weighted aggregate role score
     functions: list[str]
     is_game_changer: bool
     combo_ids: list[str]
     edhrec_decks: Optional[int]
     type_line: str
     cmc: float
+    role_quality_by_role: dict[str, float] = field(default_factory=dict)
+    oracle_text: str = ""
+    produced_mana: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -346,6 +352,12 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     combo_oracle_union: set[str] = (
         set().union(*combo_oracle_sets.values()) if combo_oracle_sets else set()
     )
+    preliminary_role_targets = compute_role_targets(
+        bracket=request.bracket,
+        profile=profile,
+        archetype=canonical_archetype,
+        avg_cmc=3.5,
+    )
 
     # --- Load all classified cards in color identity ---
     cls_subq = (
@@ -415,10 +427,6 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         "heavy": 1.3,
     }.get(request.tutor_density, 1.0)
 
-    # Track role counts so far for saturation (CORE tier cards counted first)
-    # We do two passes: core-eligible first for saturation awareness
-    role_counts: dict[str, int] = {}
-
     all_scored: list[PoolCard] = []
 
     for row in rows:
@@ -455,19 +463,28 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
                 )
             )
             rq = 0.0  # lands don't have a role quality
+            rq_by_role = {}
         else:
-            # Role quality (replaces binary fills_role)
+            # Role quality (per-role, then need-weighted for composite scoring)
             fills_needed_role = any(
                 role_bucket(fn) in _NEEDED_ROLES for fn in functions
             )
+            rq_by_role = role_quality_map(
+                functions,
+                cmc,
+                bool(row.is_instant),
+                bool(row.is_sorcery),
+                is_gc,
+                oracle_text,
+            )
             rq = (
-                best_role_quality(
-                    functions,
-                    cmc,
-                    bool(row.is_instant),
-                    bool(row.is_sorcery),
-                    is_gc,
-                    oracle_text,
+                need_weighted_role_quality(
+                    {
+                        role: quality
+                        for role, quality in rq_by_role.items()
+                        if role in _NEEDED_ROLES
+                    },
+                    preliminary_role_targets.to_dict(),
                 )
                 if fills_needed_role
                 else 0.0
@@ -512,6 +529,8 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             edhrec_decks=row.num_decks,
             type_line=row.type_line,
             cmc=cmc,
+            role_quality_by_role=rq_by_role,
+            oracle_text=oracle_text,
         )
 
         # Tier assignment
@@ -561,14 +580,37 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
                 role_counts_in_core[bucket] = role_counts_in_core.get(bucket, 0) + 1
 
     for card in pool.support + pool.flex:
-        if card.functions:
+        role_scores = {
+            role: quality
+            for role, quality in card.role_quality_by_role.items()
+            if role in _NEEDED_ROLES
+        }
+        if role_scores:
+            role_needs = {
+                role: max(
+                    0, role_targets.get(role, 8) - role_counts_in_core.get(role, 0)
+                )
+                for role in role_scores
+            }
+            previous_rq = card.role_quality
+            card.role_quality = need_weighted_role_quality(role_scores, role_needs)
+            if previous_rq != card.role_quality:
+                # Replace the 25-point role component without recomputing the
+                # whole composite score.
+                card.score = round(
+                    min(
+                        100.0,
+                        max(0.0, card.score + (card.role_quality - previous_rq) * 5),
+                    ),
+                    2,
+                )
+
             best_role = max(
-                (
-                    role_bucket(f)
-                    for f in card.functions
-                    if role_bucket(f) in _NEEDED_ROLES
+                role_scores,
+                key=lambda role: (
+                    role_needs.get(role, 0),
+                    role_scores.get(role, 0.0),
                 ),
-                key=lambda f: role_counts_in_core.get(f, 0),
                 default=None,
             )
             if best_role:

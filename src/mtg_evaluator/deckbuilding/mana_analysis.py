@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Mapping, Optional
 
 from mtg_evaluator.deckbuilding.lands import LAND_SCORES
 
@@ -30,7 +30,14 @@ _KARSTEN_SOURCES: dict[int, dict[int, int]] = {
 }
 
 _PIP_RE = re.compile(r"\{([WUBRG])\}", re.IGNORECASE)
+_MANA_SYMBOL_RE = re.compile(r"\{([WUBRGC])\}", re.IGNORECASE)
 _GENERIC_MANA_RE = re.compile(r"\{(\d+|X|Y|Z|C|S|P)\}", re.IGNORECASE)
+_ANY_COLOR_RE = re.compile(
+    r"add (one |two |three |any amount of )?mana (of|in) any "
+    r"(color|combination of colors)",
+    re.IGNORECASE,
+)
+_ADD_SENTENCE_RE = re.compile(r"[^.]*\badd\b[^.]*", re.IGNORECASE)
 
 
 def count_pips(mana_cost: Optional[str]) -> dict[str, int]:
@@ -68,8 +75,8 @@ def required_sources(pip_count: int, turn: int) -> int:
 # ---------------------------------------------------------------------------
 
 # For our known dual/fetch/shock lands, assign which colors they produce.
-# This is a sample covering the most common lands. Unknown lands are assumed
-# to produce all colors in the deck's color identity (safe approximation).
+# This covers the most common lands. Unknown lands are treated as unknown unless
+# Scryfall produced_mana or oracle text is provided by the caller.
 _LAND_COLORS: dict[str, set[str]] = {
     # Original duals
     "Underground Sea": {"U", "B"},
@@ -149,16 +156,68 @@ _LAND_COLORS: dict[str, set[str]] = {
 }
 
 
-def land_colors(land_name: str, deck_color_identity: list[str]) -> set[str]:
+@dataclass(frozen=True)
+class LandManaData:
+    """Known mana-production details for a land."""
+
+    produced_mana: tuple[str, ...] = ()
+    oracle_text: str = ""
+
+
+def _identity_colors(deck_color_identity: list[str]) -> set[str]:
+    return set(deck_color_identity) - {"C"}
+
+
+def _colors_from_produced_mana(
+    produced_mana: tuple[str, ...] | list[str] | None,
+    deck_color_identity: list[str],
+) -> set[str] | None:
+    if not produced_mana:
+        return None
+    allowed = set(deck_color_identity) | {"C"}
+    return {
+        str(color).upper() for color in produced_mana if str(color).upper() in allowed
+    }
+
+
+def _colors_from_oracle_text(
+    oracle_text: str | None,
+    deck_color_identity: list[str],
+) -> set[str] | None:
+    if not oracle_text:
+        return None
+    colors: set[str] = set()
+    for sentence in _ADD_SENTENCE_RE.findall(oracle_text):
+        if _ANY_COLOR_RE.search(sentence):
+            return _identity_colors(deck_color_identity)
+        colors.update(sym.upper() for sym in _MANA_SYMBOL_RE.findall(sentence))
+    if colors:
+        return colors & (set(deck_color_identity) | {"C"})
+    return None
+
+
+def land_colors(
+    land_name: str,
+    deck_color_identity: list[str],
+    produced_mana: tuple[str, ...] | list[str] | None = None,
+    oracle_text: str | None = None,
+) -> set[str]:
     """Return the colors a land produces given the deck's color identity."""
+    produced = _colors_from_produced_mana(produced_mana, deck_color_identity)
+    if produced is not None:
+        return produced
+
     if land_name in _LAND_COLORS:
         result = _LAND_COLORS[land_name]
         if result is None:
-            # All-colors land — produces only colors in identity
-            return set(deck_color_identity) - {"C"}
+            # All-colors land: produces only colors in identity
+            return _identity_colors(deck_color_identity)
         return result & (set(deck_color_identity) | {"C"})
-    # Unknown land — assume it can produce any color in the identity (safe overestimate)
-    return set(deck_color_identity) - {"C"}
+    parsed = _colors_from_oracle_text(oracle_text, deck_color_identity)
+    if parsed is not None:
+        return parsed
+
+    return set()
 
 
 @dataclass
@@ -173,8 +232,11 @@ class ManaAnalysis:
     untapped_land_count: int  # T1 + T2 lands (roughly untapped)
     tapland_count: int  # T4 + T5 lands
     fetch_count: int
+    unknown_land_count: int
     pip_stress: float  # 0-5: how demanding the commander's pips are
     cast_reliability: float  # 0-1: estimated commander cast reliability
+    unknown_lands: list[str] = field(default_factory=list)
+    pip_reliability: dict[str, float] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -187,8 +249,11 @@ class ManaAnalysis:
             "untapped_land_count": self.untapped_land_count,
             "tapland_count": self.tapland_count,
             "fetch_count": self.fetch_count,
+            "unknown_land_count": self.unknown_land_count,
+            "unknown_lands": self.unknown_lands,
             "pip_stress": self.pip_stress,
             "cast_reliability": self.cast_reliability,
+            "pip_reliability": self.pip_reliability,
             "warnings": self.warnings,
         }
 
@@ -199,6 +264,7 @@ def analyze_mana_base(
     commander_cmc: float,
     deck_color_identity: list[str],
     partner_mana_cost: Optional[str] = None,
+    land_metadata: Mapping[str, LandManaData] | None = None,
 ) -> ManaAnalysis:
     """
     Analyze the mana base of a (proposed) deck for a given commander.
@@ -212,9 +278,19 @@ def analyze_mana_base(
     untapped = 0
     taplands = 0
     fetches = 0
+    unknown_lands: list[str] = []
+    land_metadata = land_metadata or {}
 
     for name in land_names:
-        produces = land_colors(name, deck_color_identity)
+        metadata = land_metadata.get(name, LandManaData())
+        produces = land_colors(
+            name,
+            deck_color_identity,
+            produced_mana=metadata.produced_mana,
+            oracle_text=metadata.oracle_text,
+        )
+        if not produces and name not in _LAND_COLORS and name not in unknown_lands:
+            unknown_lands.append(name)
         for c in produces:
             if c in color_sources:
                 color_sources[c] += 1
@@ -265,14 +341,17 @@ def analyze_mana_base(
     pip_stress = min(5.0, n_colors_with_pips * 0.8 + max_pips * 0.6)
 
     # Cast reliability (simple heuristic: fraction of required sources met)
+    pip_reliability: dict[str, float] = {}
     if not req_sources:
         cast_reliability = 1.0
     else:
-        fractions = [
-            min(1.0, color_sources.get(c, 0) / r)
-            for c, r in req_sources.items()
-            if r > 0
-        ]
+        fractions = []
+        for color, required in req_sources.items():
+            if required <= 0:
+                continue
+            reliability = round(min(1.0, color_sources.get(color, 0) / required), 3)
+            pip_reliability[color] = reliability
+            fractions.append(reliability)
         cast_reliability = (
             round(sum(fractions) / len(fractions), 3) if fractions else 1.0
         )
@@ -295,6 +374,12 @@ def analyze_mana_base(
         )
     if fetches == 0 and len(deck_color_identity) >= 3:
         warns.append("No fetchlands in 3+ color deck: color fixing may be unreliable.")
+    if unknown_lands:
+        preview = ", ".join(unknown_lands[:5])
+        extra = f" (+{len(unknown_lands) - 5} more)" if len(unknown_lands) > 5 else ""
+        warns.append(
+            f"Unknown land mana production treated as colorless: {preview}{extra}."
+        )
 
     return ManaAnalysis(
         color_sources=color_sources,
@@ -305,7 +390,10 @@ def analyze_mana_base(
         untapped_land_count=untapped,
         tapland_count=taplands,
         fetch_count=fetches,
+        unknown_land_count=len(unknown_lands),
         pip_stress=round(pip_stress, 2),
         cast_reliability=cast_reliability,
+        unknown_lands=unknown_lands,
+        pip_reliability=pip_reliability,
         warnings=warns,
     )

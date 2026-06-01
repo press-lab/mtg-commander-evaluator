@@ -24,7 +24,7 @@ from mtg_evaluator.db.models import (
     CardArchetypeScore,
     EDHRecCardStats,
 )
-from mtg_evaluator.evaluation.evaluator import GAME_CHANGERS
+from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS
 
 
 @dataclass

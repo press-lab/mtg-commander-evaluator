@@ -358,6 +358,8 @@ async def build_pool(req: BuildRequest):
             "score": c.score,
             "archetype_score": c.archetype_score,
             "bracket_score": c.bracket_score,
+            "role_quality": c.role_quality,
+            "role_quality_by_role": c.role_quality_by_role,
             "functions": c.functions,
             "is_game_changer": c.is_game_changer,
             "combo_ids": c.combo_ids,

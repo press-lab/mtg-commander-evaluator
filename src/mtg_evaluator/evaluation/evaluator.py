@@ -21,9 +21,11 @@ from mtg_evaluator.db.models import (
     Decklist,
     DeckCard,
     DeckEvaluation,
+    RawScryfallCard,
 )
 from mtg_evaluator.evaluation.parser import ParsedDecklist, ParsedCard
 from mtg_evaluator.evaluation.bracket_llm import classify_bracket, BracketResult
+from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS, is_game_changer
 from mtg_evaluator.db.models import SpellbookCombo, SpellbookComboCard
 from mtg_evaluator.deckbuilding.commander_profile import (
     CommanderProfileData,
@@ -33,7 +35,11 @@ from mtg_evaluator.deckbuilding.consistency import (
     ConsistencyReport,
     compute_consistency,
 )
-from mtg_evaluator.deckbuilding.mana_analysis import ManaAnalysis, analyze_mana_base
+from mtg_evaluator.deckbuilding.mana_analysis import (
+    LandManaData,
+    ManaAnalysis,
+    analyze_mana_base,
+)
 from mtg_evaluator.deckbuilding.packages import (
     PackageHealth,
     NonboWarning,
@@ -121,74 +127,6 @@ EXTRA_TURN_CARDS: frozenset[str] = frozenset(
     }
 )
 
-# Official Wizards of the Coast Game Changers list (February 2026, 53 cards).
-# Brackets 1–2: 0 allowed. Bracket 3: up to 3. Brackets 4–5: unlimited.
-# Source: https://magic.wizards.com/en/news/announcements/commander-brackets-beta-update-february-9-2026
-GAME_CHANGERS: frozenset[str] = frozenset(
-    {
-        # White
-        "Drannith Magistrate",
-        "Enlightened Tutor",
-        "Farewell",
-        "Humility",
-        "Teferi's Protection",
-        "Smothering Tithe",
-        # Blue
-        "Consecrated Sphinx",
-        "Cyclonic Rift",
-        "Force of Will",
-        "Fierce Guardianship",
-        "Gifts Ungiven",
-        "Intuition",
-        "Mystical Tutor",
-        "Narset, Parter of Veils",
-        "Rhystic Study",
-        "Thassa's Oracle",
-        # Black
-        "Ad Nauseam",
-        "Bolas's Citadel",
-        "Braids, Cabal Minion",
-        "Demonic Tutor",
-        "Imperial Seal",
-        "Necropotence",
-        "Opposition Agent",
-        "Orcish Bowmasters",
-        "Tergrid, God of Fright // Tergrid's Lantern",
-        "Vampiric Tutor",
-        # Red
-        "Gamble",
-        "Jeska's Will",
-        "Underworld Breach",
-        # Green
-        "Biorhythm",
-        "Crop Rotation",
-        "Natural Order",
-        "Seedborn Muse",
-        "Survival of the Fittest",
-        "Worldly Tutor",
-        # Multicolor
-        "Aura Shards",
-        "Coalition Victory",
-        "Grand Arbiter Augustin IV",
-        "Notion Thief",
-        # Colorless / Lands
-        "Ancient Tomb",
-        "Chrome Mox",
-        "Field of the Dead",
-        "Gaea's Cradle",
-        "Glacial Chasm",
-        "Grim Monolith",
-        "Lion's Eye Diamond",
-        "Mana Vault",
-        "Mishra's Workshop",
-        "Mox Diamond",
-        "Panoptic Mirror",
-        "Serra's Sanctum",
-        "The One Ring",
-        "The Tabernacle at Pendrell Vale",
-    }
-)
-
 
 @dataclass
 class ComboHit:
@@ -198,24 +136,60 @@ class ComboHit:
     results_description: str | None
 
 
+_COMBO_CARD_SET_CACHE: dict[str, frozenset[str]] = {}
+_COMBO_CARD_NAME_CACHE: dict[str, tuple[tuple[str, str], ...]] = {}
+
+
+def _combo_card_sets(
+    session: Session,
+    combo_ids: list[str],
+) -> dict[str, frozenset[str]]:
+    """Return cached oracle-id sets for the requested Spellbook combos."""
+    missing = [
+        combo_id for combo_id in combo_ids if combo_id not in _COMBO_CARD_SET_CACHE
+    ]
+    if missing:
+        rows = session.execute(
+            select(
+                SpellbookComboCard.combo_id,
+                SpellbookComboCard.oracle_id,
+                SpellbookComboCard.card_name,
+            )
+            .where(SpellbookComboCard.combo_id.in_(missing))
+            .where(SpellbookComboCard.oracle_id.isnot(None))
+        ).all()
+        grouped_oracles: dict[str, set[str]] = {combo_id: set() for combo_id in missing}
+        grouped_names: dict[str, list[tuple[str, str]]] = {
+            combo_id: [] for combo_id in missing
+        }
+        for combo_id, oracle_id, card_name in rows:
+            grouped_oracles.setdefault(combo_id, set()).add(oracle_id)
+            grouped_names.setdefault(combo_id, []).append((oracle_id, card_name))
+        for combo_id in missing:
+            _COMBO_CARD_SET_CACHE[combo_id] = frozenset(
+                grouped_oracles.get(combo_id, set())
+            )
+            _COMBO_CARD_NAME_CACHE[combo_id] = tuple(grouped_names.get(combo_id, []))
+
+    return {combo_id: _COMBO_CARD_SET_CACHE[combo_id] for combo_id in combo_ids}
+
+
 def _find_combos(session: Session, oracle_ids: set[str]) -> list[ComboHit]:
     """Return all Spellbook combos where every card's oracle_id is in the deck."""
     if not oracle_ids:
         return []
 
-    # Find combo_ids where ALL cards have oracle_ids in the deck
-    # We only match combos where every card was resolved to an oracle_id
-    rows = session.execute(
-        select(SpellbookComboCard.combo_id, SpellbookComboCard.oracle_id).where(
-            SpellbookComboCard.oracle_id.isnot(None)
-        )
-    ).all()
+    candidate_ids = list(
+        session.scalars(
+            select(SpellbookComboCard.combo_id)
+            .where(SpellbookComboCard.oracle_id.in_(oracle_ids))
+            .distinct()
+        ).all()
+    )
+    if not candidate_ids:
+        return []
 
-    # Group by combo_id
-    combo_oracles: dict[str, set[str]] = {}
-    for combo_id, oracle_id in rows:
-        combo_oracles.setdefault(combo_id, set()).add(oracle_id)
-
+    combo_oracles = _combo_card_sets(session, candidate_ids)
     matched_ids = [
         cid
         for cid, card_set in combo_oracles.items()
@@ -234,7 +208,11 @@ def _find_combos(session: Session, oracle_ids: set[str]) -> list[ComboHit]:
 
     hits = []
     for combo in combos:
-        card_names = [c.card_name for c in combo.cards if c.oracle_id in oracle_ids]
+        card_names = [
+            name
+            for oracle_id, name in _COMBO_CARD_NAME_CACHE.get(combo.spellbook_id, ())
+            if oracle_id in oracle_ids
+        ]
         hits.append(
             ComboHit(
                 spellbook_id=combo.spellbook_id,
@@ -250,10 +228,7 @@ def _count_game_changers(card_names: list[str]) -> list[str]:
     """Return the game changer card names present in the deck."""
     found = []
     for name in card_names:
-        # Handle DFC / split names — check both full name and front face
-        if name in GAME_CHANGERS:
-            found.append(name)
-        elif " // " in name and name.split(" // ")[0] in GAME_CHANGERS:
+        if is_game_changer(name):
             found.append(name)
     return found
 
@@ -569,6 +544,42 @@ def _cards_by_oracle(session: Session, oracle_ids: list[str]) -> dict[str, Card]
     return {card.oracle_id: card for card in cards}
 
 
+def _land_mana_metadata(
+    session: Session,
+    cards_by_oracle: dict[str, Card],
+) -> dict[str, LandManaData]:
+    land_cards = [card for card in cards_by_oracle.values() if card.is_land]
+    metadata = {
+        card.name: LandManaData(oracle_text=card.oracle_text or "")
+        for card in land_cards
+    }
+    if not land_cards:
+        return metadata
+
+    land_oracle_ids = [card.oracle_id for card in land_cards]
+    raw_rows = session.execute(
+        select(RawScryfallCard.oracle_id, RawScryfallCard.raw_json)
+        .where(RawScryfallCard.oracle_id.in_(land_oracle_ids))
+        .order_by(RawScryfallCard.ingested_at.desc())
+    ).all()
+    cards_by_id = {card.oracle_id: card for card in land_cards}
+    seen: set[str] = set()
+    for oracle_id, raw_json in raw_rows:
+        if oracle_id in seen:
+            continue
+        seen.add(oracle_id)
+        card = cards_by_id.get(oracle_id)
+        if not card:
+            continue
+        produced_mana = tuple(raw_json.get("produced_mana") or ())
+        oracle_text = raw_json.get("oracle_text") or card.oracle_text or ""
+        metadata[card.name] = LandManaData(
+            produced_mana=produced_mana,
+            oracle_text=oracle_text,
+        )
+    return metadata
+
+
 def _flat_functions(
     parsed_cards: list[ParsedCard],
     classifications: dict[str, dict],
@@ -692,6 +703,7 @@ def _phase5_analysis(
         if pc.oracle_id in cards_by_oracle and cards_by_oracle[pc.oracle_id].is_land
         for _ in range(pc.quantity)
     ]
+    land_metadata = _land_mana_metadata(session, cards_by_oracle)
     color_identity = list(commander_card.color_identity or []) if commander_card else []
     mana_analysis = (
         analyze_mana_base(
@@ -700,6 +712,7 @@ def _phase5_analysis(
             commander_cmc=float(commander_card.cmc or 3),
             deck_color_identity=color_identity,
             partner_mana_cost=partner_card.mana_cost if partner_card else None,
+            land_metadata=land_metadata,
         )
         if commander_card
         else None

@@ -29,7 +29,7 @@ from mtg_evaluator.db.models import (
     CardFunction,
     EDHRecCardStats,
 )
-from mtg_evaluator.evaluation.evaluator import GAME_CHANGERS
+from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS
 from mtg_evaluator.deckbuilding.pool import _log_popularity
 
 _BRACKET_KEY = {1: "casual", 2: "bracket_2", 3: "bracket_3", 4: "bracket_4", 5: "cedh"}

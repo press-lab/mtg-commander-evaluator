@@ -15,6 +15,7 @@ No new LLM calls — uses data we already have: cmc, type_line, oracle_text, fun
 from __future__ import annotations
 
 import re
+from typing import Mapping
 
 from mtg_evaluator.card_functions import normalize_functions, role_bucket
 
@@ -186,6 +187,69 @@ def compute_role_quality(
     return round(min(max(base, 0.0), 5.0), 2)
 
 
+def role_quality_map(
+    functions: list[str],
+    cmc: float,
+    is_instant: bool,
+    is_sorcery: bool,
+    is_game_changer: bool,
+    oracle_text: str = "",
+) -> dict[str, float]:
+    """
+    Return per-role quality scores for every role this card fills.
+    """
+    if not functions:
+        return {}
+    roles = sorted({role_bucket(fn) for fn in normalize_functions(functions)})
+    return {
+        role: compute_role_quality(
+            role,
+            cmc,
+            is_instant,
+            is_sorcery,
+            functions,
+            is_game_changer,
+            oracle_text,
+        )
+        for role in roles
+    }
+
+
+def need_weighted_role_quality(
+    role_scores: Mapping[str, float],
+    role_needs: Mapping[str, int] | None = None,
+) -> float:
+    """
+    Collapse per-role quality into one composite input using current role gaps.
+
+    Multi-role cards get the most credit when they cover roles the deck still
+    needs, and saturated roles still count a little without dominating the card.
+    """
+    if not role_scores:
+        return 0.0
+
+    needs = role_needs or {}
+    total_weight = 0.0
+    weighted_quality = 0.0
+    covered_needed_roles = 0
+
+    for role, quality in role_scores.items():
+        gap = max(0, needs.get(role, 1))
+        if gap > 0:
+            weight = 1.0 + min(gap, 4) * 0.2
+            covered_needed_roles += 1
+        else:
+            weight = 0.35
+        total_weight += weight
+        weighted_quality += quality * weight
+
+    if total_weight == 0:
+        return 0.0
+
+    multi_role_bonus = min(0.5, max(0, covered_needed_roles - 1) * 0.2)
+    return round(min(5.0, weighted_quality / total_weight + multi_role_bonus), 2)
+
+
 def best_role_quality(
     functions: list[str],
     cmc: float,
@@ -195,15 +259,17 @@ def best_role_quality(
     oracle_text: str = "",
 ) -> float:
     """
-    Returns the maximum role quality score across all roles this card fills.
-    Used in the composite card score.
+    Backward-compatible max role quality score across all roles this card fills.
+    Prefer role_quality_map + need_weighted_role_quality for new scoring.
     """
-    if not functions:
-        return 0.0
-    functions = normalize_functions(functions)
     return max(
-        compute_role_quality(
-            role, cmc, is_instant, is_sorcery, functions, is_game_changer, oracle_text
-        )
-        for role in functions
+        role_quality_map(
+            functions,
+            cmc,
+            is_instant,
+            is_sorcery,
+            is_game_changer,
+            oracle_text,
+        ).values(),
+        default=0.0,
     )

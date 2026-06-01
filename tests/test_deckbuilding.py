@@ -156,6 +156,102 @@ class TestCompositeScore:
         assert score == 15.0
 
 
+class TestManaAnalysis:
+    def test_unknown_land_does_not_fix_all_colors(self):
+        from mtg_evaluator.deckbuilding.mana_analysis import analyze_mana_base
+
+        analysis = analyze_mana_base(
+            land_names=["Mystery Land"],
+            commander_mana_cost="{W}{U}",
+            commander_cmc=2,
+            deck_color_identity=["W", "U"],
+        )
+
+        assert analysis.color_sources == {"W": 0, "U": 0}
+        assert analysis.unknown_land_count == 1
+        assert analysis.pip_reliability == {"W": 0.0, "U": 0.0}
+
+    def test_scryfall_produced_mana_drives_land_colors(self):
+        from mtg_evaluator.deckbuilding.mana_analysis import (
+            LandManaData,
+            analyze_mana_base,
+        )
+
+        analysis = analyze_mana_base(
+            land_names=["Custom Dual"],
+            commander_mana_cost="{W}{U}",
+            commander_cmc=2,
+            deck_color_identity=["W", "U"],
+            land_metadata={"Custom Dual": LandManaData(produced_mana=("W", "U"))},
+        )
+
+        assert analysis.color_sources == {"W": 1, "U": 1}
+        assert analysis.unknown_land_count == 0
+
+    def test_oracle_text_drives_land_colors_when_scryfall_missing(self):
+        from mtg_evaluator.deckbuilding.mana_analysis import (
+            LandManaData,
+            analyze_mana_base,
+        )
+
+        analysis = analyze_mana_base(
+            land_names=["Text Dual"],
+            commander_mana_cost="{B}{G}",
+            commander_cmc=2,
+            deck_color_identity=["B", "G"],
+            land_metadata={
+                "Text Dual": LandManaData(oracle_text="{T}: Add {B} or {G}.")
+            },
+        )
+
+        assert analysis.color_sources == {"B": 1, "G": 1}
+        assert analysis.unknown_land_count == 0
+
+
+class TestRoleQuality:
+    def test_role_quality_map_keeps_per_role_scores(self):
+        from mtg_evaluator.deckbuilding.role_quality import role_quality_map
+
+        scores = role_quality_map(
+            functions=["draw", "removal"],
+            cmc=2,
+            is_instant=True,
+            is_sorcery=False,
+            is_game_changer=False,
+            oracle_text="Destroy target creature. Draw two cards.",
+        )
+
+        assert set(scores) == {"draw", "removal"}
+        assert scores["draw"] > 0
+        assert scores["removal"] > 0
+
+    def test_need_weighted_role_quality_rewards_current_gaps(self):
+        from mtg_evaluator.deckbuilding.role_quality import (
+            need_weighted_role_quality,
+        )
+
+        scores = {"draw": 3.0, "removal": 4.0}
+        draw_needed = need_weighted_role_quality(scores, {"draw": 4, "removal": 0})
+        removal_needed = need_weighted_role_quality(scores, {"draw": 0, "removal": 4})
+
+        assert removal_needed > draw_needed
+
+
+class TestGameChangersData:
+    def test_game_changers_load_from_versioned_data(self):
+        from mtg_evaluator.evaluation.game_changers import (
+            GAME_CHANGER_SOURCE,
+            GAME_CHANGER_VERSION,
+            GAME_CHANGERS,
+            is_game_changer,
+        )
+
+        assert GAME_CHANGER_VERSION == "2026-02-09"
+        assert GAME_CHANGER_SOURCE.startswith("https://magic.wizards.com/")
+        assert "Cyclonic Rift" in GAME_CHANGERS
+        assert is_game_changer("Tergrid, God of Fright // Tergrid's Lantern")
+
+
 class TestCardPoolProperties:
     """CardPool dataclass: all_cards aggregation and total count."""
 

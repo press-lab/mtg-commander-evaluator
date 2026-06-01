@@ -250,6 +250,14 @@ def evaluate_deck(
         typer.echo(
             f"Commander cast reliability: {result.mana_analysis.cast_reliability:.0%}"
         )
+        if result.mana_analysis.pip_reliability:
+            pip_parts = [
+                f"{color} {reliability:.0%}"
+                for color, reliability in sorted(
+                    result.mana_analysis.pip_reliability.items()
+                )
+            ]
+            typer.echo(f"Commander pip reliability: {', '.join(pip_parts)}")
         for warning in result.mana_analysis.warnings:
             typer.echo(f"  ! {warning}")
     if result.package_health and result.package_health.warnings:
