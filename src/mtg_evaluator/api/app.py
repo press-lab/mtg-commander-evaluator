@@ -200,6 +200,19 @@ async def evaluate(req: EvaluateRequest):
         for rc in result.role_coverage
         if rc.average_quality is not None
     }
+    missing_roles = [
+        {
+            "role": rc.function,
+            "actual": rc.count,
+            "target": rc.minimum,
+            "missing": rc.gap,
+        }
+        for rc in result.role_coverage
+        if not rc.meets_minimum
+    ]
+    role_target_modifiers = (
+        result.role_targets.modifiers_applied if result.role_targets else []
+    )
 
     # Suggestions: upgrade = top cards NOT in deck; downgrade = remove GCs
     upgrade_suggestions = result.improvement_suggestions[:8]
@@ -250,11 +263,13 @@ async def evaluate(req: EvaluateRequest):
         "role_coverage": role_rows,
         "role_actuals": role_actuals,
         "role_quality": role_quality,
+        "missing_roles": missing_roles,
+        "modifiers_applied": role_target_modifiers,
         "commander_profile": _serialize_commander_profile(result.commander_profile),
         "role_targets": (
             {
                 **result.role_targets.to_dict(),
-                "modifiers_applied": result.role_targets.modifiers_applied,
+                "modifiers_applied": role_target_modifiers,
             }
             if result.role_targets
             else None
