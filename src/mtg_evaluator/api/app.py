@@ -194,6 +194,12 @@ async def evaluate(req: EvaluateRequest):
         }
         for rc in result.role_coverage
     ]
+    role_actuals = {rc.function: rc.count for rc in result.role_coverage}
+    role_quality = {
+        rc.function: rc.average_quality
+        for rc in result.role_coverage
+        if rc.average_quality is not None
+    }
 
     # Suggestions: upgrade = top cards NOT in deck; downgrade = remove GCs
     upgrade_suggestions = result.improvement_suggestions[:8]
@@ -242,6 +248,8 @@ async def evaluate(req: EvaluateRequest):
         "combos": combo_list,
         "mass_land_denial": result.mass_land_denial_found,
         "role_coverage": role_rows,
+        "role_actuals": role_actuals,
+        "role_quality": role_quality,
         "commander_profile": _serialize_commander_profile(result.commander_profile),
         "role_targets": (
             {
