@@ -9,6 +9,7 @@ Hard floors from official WotC rules (deterministic, enforced after LLM call):
   1-3 Game Changers → floor bracket 3
   4+ Game Changers  → floor bracket 4
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -66,14 +67,20 @@ _TOOL_SCHEMA = {
 
 @dataclass
 class BracketResult:
-    bracket: int           # 1-5
-    bracket_label: str     # bracket_2, bracket_3, etc. (matches existing DB labels)
+    bracket: int  # 1-5
+    bracket_label: str  # bracket_2, bracket_3, etc. (matches existing DB labels)
     reasoning: str
     game_changer_count: int
     game_changer_floor: int  # minimum bracket from GC rules
 
 
-_INT_TO_LABEL = {1: "bracket_1", 2: "bracket_2", 3: "bracket_3", 4: "bracket_4", 5: "cedh"}
+_INT_TO_LABEL = {
+    1: "bracket_1",
+    2: "bracket_2",
+    3: "bracket_3",
+    4: "bracket_4",
+    5: "cedh",
+}
 _GC_FLOOR = {0: 1, 1: 3, 2: 3, 3: 3}  # 0 GCs → floor 1; 1-3 → floor 3; 4+ → floor 4
 
 
@@ -132,8 +139,11 @@ def classify_bracket(
 
     # Build compact user message — all the hard evidence up front
     cmdr_line = commander + (f" + {partner}" if partner else "")
-    gc_line = (f"{gc_count} Game Changers: {', '.join(game_changers_found)}"
-               if game_changers_found else "0 Game Changers")
+    gc_line = (
+        f"{gc_count} Game Changers: {', '.join(game_changers_found)}"
+        if game_changers_found
+        else "0 Game Changers"
+    )
 
     combo_lines: list[str] = []
     for c in combos_found:
@@ -141,11 +151,25 @@ def classify_bracket(
             f"  [{c.bracket_tag}] {' + '.join(c.card_names)}"
             + (f" → {c.results_description}" if c.results_description else "")
         )
-    combo_section = ("Known combos present:\n" + "\n".join(combo_lines)) if combo_lines else "No known combos detected"
+    combo_section = (
+        ("Known combos present:\n" + "\n".join(combo_lines))
+        if combo_lines
+        else "No known combos detected"
+    )
 
-    land_denial_line = f"Mass land denial: {', '.join(mass_land_denial_found)}" if mass_land_denial_found else ""
-    extra_turns_line = f"Extra turn cards: {', '.join(extra_turns_found)}" if extra_turns_found else ""
-    hard_floor_line = f"HARD FLOOR: bracket {floor} (from: {'; '.join(floor_reasons)})" if floor_reasons else ""
+    land_denial_line = (
+        f"Mass land denial: {', '.join(mass_land_denial_found)}"
+        if mass_land_denial_found
+        else ""
+    )
+    extra_turns_line = (
+        f"Extra turn cards: {', '.join(extra_turns_found)}" if extra_turns_found else ""
+    )
+    hard_floor_line = (
+        f"HARD FLOOR: bracket {floor} (from: {'; '.join(floor_reasons)})"
+        if floor_reasons
+        else ""
+    )
 
     coverage_line = "  ".join(f"{k}={v}" for k, v in role_coverage.items())
     card_list = ", ".join(card_names)

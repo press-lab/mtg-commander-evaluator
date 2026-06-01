@@ -6,7 +6,6 @@ import pytest
 from mtg_evaluator.change_detection.detector import detect_changes, _create_job
 from mtg_evaluator.db.models import JobStatus
 
-
 NOW = datetime(2024, 6, 1, 12, 0, 0)
 
 
@@ -65,6 +64,7 @@ class TestDetectChanges:
         raw_scalars.all.return_value = raw_cards
 
         call_count = [0]
+
         def scalars_side_effect(stmt):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -91,7 +91,9 @@ class TestDetectChanges:
 
         jobs_added = []
         session = MagicMock()
-        session.get.side_effect = lambda model, pk: existing_card if pk == oracle_id else None
+        session.get.side_effect = lambda model, pk: (
+            existing_card if pk == oracle_id else None
+        )
 
         run_scalars = MagicMock()
         run_scalars.first.return_value = run
@@ -99,6 +101,7 @@ class TestDetectChanges:
         raw_scalars.all.return_value = raw_cards
 
         call_count = [0]
+
         def scalars_side_effect(stmt):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -129,7 +132,9 @@ class TestDetectChanges:
 
         jobs_added = []
         session = MagicMock()
-        session.get.side_effect = lambda model, pk: existing_card if pk == oracle_id else None
+        session.get.side_effect = lambda model, pk: (
+            existing_card if pk == oracle_id else None
+        )
 
         run_scalars = MagicMock()
         run_scalars.first.return_value = run
@@ -140,6 +145,7 @@ class TestDetectChanges:
         no_pending_job.first.return_value = None
 
         call_count = [0]
+
         def scalars_side_effect(stmt):
             call_count[0] += 1
             if call_count[0] == 1:

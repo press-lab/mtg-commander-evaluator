@@ -54,7 +54,9 @@ def run_ingestion(session: Session, use_cache: bool = False) -> CardIngestionRun
     return run
 
 
-def _store_raw_cards(session: Session, run: CardIngestionRun, cards: list[dict]) -> None:
+def _store_raw_cards(
+    session: Session, run: CardIngestionRun, cards: list[dict]
+) -> None:
     batch_size = 500
     now = datetime.utcnow()
 

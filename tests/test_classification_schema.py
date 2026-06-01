@@ -17,7 +17,6 @@ from mtg_evaluator.classification.schema import (
 from mtg_evaluator.classification.validator import validate_classification
 from mtg_evaluator.classification.stub_classifier import StubClassifier
 
-
 VALID_CLASSIFICATION = {
     "oracle_id": "a2daf943-dc88-4c8b-ac97-4476ea6abb9c",
     "card_name": "Swords to Plowshares",
@@ -28,7 +27,13 @@ VALID_CLASSIFICATION = {
     "general_commander_power": 5,
     "role_power": {"removal_power": 5},
     "archetype_fit": {"control": 4, "toolbox": 5},
-    "bracket_fit": {"casual": 3, "bracket_2": 4, "bracket_3": 5, "bracket_4": 5, "cedh": 5},
+    "bracket_fit": {
+        "casual": 3,
+        "bracket_2": 4,
+        "bracket_3": 5,
+        "bracket_4": 5,
+        "cedh": 5,
+    },
     "commander_context_notes": [],
     "warnings": [],
 }
@@ -110,7 +115,10 @@ class TestEnumValidation:
             CardClassification.model_validate(data)
 
     def test_unknown_context_note_fails(self):
-        data = {**VALID_CLASSIFICATION, "commander_context_notes": ["vague_prose_comment"]}
+        data = {
+            **VALID_CLASSIFICATION,
+            "commander_context_notes": ["vague_prose_comment"],
+        }
         with pytest.raises(ValidationError):
             CardClassification.model_validate(data)
 
@@ -149,7 +157,9 @@ class TestStubClassifier:
         assert self.classifier.version == "stub-1.0"
 
     def _make_card(self, oracle_id, name, oracle_text, type_line):
-        return CardInput(oracle_id=oracle_id, name=name, oracle_text=oracle_text, type_line=type_line)
+        return CardInput(
+            oracle_id=oracle_id, name=name, oracle_text=oracle_text, type_line=type_line
+        )
 
     def test_stub_output_passes_validation(self):
         card = self._make_card(
@@ -164,21 +174,43 @@ class TestStubClassifier:
         assert is_valid is True, f"Stub output failed validation: {errors}"
 
     def test_stub_infers_draw_from_oracle_text(self):
-        result = self.classifier.classify(self._make_card("test-draw", "Divination", "Draw two cards.", "Sorcery"))
+        result = self.classifier.classify(
+            self._make_card("test-draw", "Divination", "Draw two cards.", "Sorcery")
+        )
         assert "draw" in result.functions
 
     def test_stub_infers_tutor(self):
-        result = self.classifier.classify(self._make_card("test-tutor", "Cultivate", "Search your library for up to two basic land cards.", "Sorcery"))
+        result = self.classifier.classify(
+            self._make_card(
+                "test-tutor",
+                "Cultivate",
+                "Search your library for up to two basic land cards.",
+                "Sorcery",
+            )
+        )
         assert "tutor" in result.functions
 
     def test_stub_infers_counterspell(self):
-        result = self.classifier.classify(self._make_card("test-counter", "Counterspell", "Counter target spell.", "Instant"))
+        result = self.classifier.classify(
+            self._make_card(
+                "test-counter", "Counterspell", "Counter target spell.", "Instant"
+            )
+        )
         assert "counterspell" in result.functions
 
     def test_stub_infers_instant_timing(self):
-        result = self.classifier.classify(self._make_card("test-instant", "Swords to Plowshares", "Exile target creature.", "Instant"))
+        result = self.classifier.classify(
+            self._make_card(
+                "test-instant",
+                "Swords to Plowshares",
+                "Exile target creature.",
+                "Instant",
+            )
+        )
         assert "instant_speed" in result.timing
 
     def test_stub_general_power_in_range(self):
-        result = self.classifier.classify(self._make_card("test-power", "Forest", "", "Basic Land — Forest"))
+        result = self.classifier.classify(
+            self._make_card("test-power", "Forest", "", "Basic Land — Forest")
+        )
         assert 1 <= result.general_commander_power <= 5

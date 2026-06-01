@@ -15,9 +15,16 @@ from mtg_evaluator.classification.validator import validate_classification
 from mtg_evaluator.config import settings
 from mtg_evaluator.db.connection import get_session
 from mtg_evaluator.db.models import (
-    Card, CardClassificationJob, CardClassification as DBClassification,
-    CardFunction, CardArchetypeScore, CardPowerScore, CardBracketScore,
-    CardSynergyHook, EDHRecCardStats, JobStatus,
+    Card,
+    CardClassificationJob,
+    CardClassification as DBClassification,
+    CardFunction,
+    CardArchetypeScore,
+    CardPowerScore,
+    CardBracketScore,
+    CardSynergyHook,
+    EDHRecCardStats,
+    JobStatus,
 )
 
 
@@ -32,20 +39,29 @@ class RunStats:
 def get_classifier() -> BaseClassifier:
     provider = settings.classifier.lower()
     if provider == "deepseek":
-        from mtg_evaluator.classification.anthropic_classifier import AnthropicClassifier
+        from mtg_evaluator.classification.anthropic_classifier import (
+            AnthropicClassifier,
+        )
+
         return AnthropicClassifier(
             api_key=settings.deepseek_api_key,
             base_url=settings.deepseek_anthropic_base_url,
             model=settings.deepseek_model,
         )
     elif provider == "anthropic":
-        from mtg_evaluator.classification.anthropic_classifier import AnthropicClassifier
+        from mtg_evaluator.classification.anthropic_classifier import (
+            AnthropicClassifier,
+        )
+
         return AnthropicClassifier()
     elif provider == "stub":
         from mtg_evaluator.classification.stub_classifier import StubClassifier
+
         return StubClassifier()
     else:
-        raise ValueError(f"Unknown classifier: {provider!r}. Use 'deepseek', 'anthropic', or 'stub'.")
+        raise ValueError(
+            f"Unknown classifier: {provider!r}. Use 'deepseek', 'anthropic', or 'stub'."
+        )
 
 
 def _card_to_input(card: Card) -> CardInput:
@@ -90,57 +106,71 @@ def _store_classification(
 
     if is_valid and classification:
         for fn in classification.functions:
-            session.add(CardFunction(
-                oracle_id=job.oracle_id,
-                classification_id=db_cls.id,
-                function_name=fn,
-            ))
+            session.add(
+                CardFunction(
+                    oracle_id=job.oracle_id,
+                    classification_id=db_cls.id,
+                    function_name=fn,
+                )
+            )
 
         archetype_dict = classification.archetype_fit.model_dump(exclude_none=True)
         for archetype, score in archetype_dict.items():
-            session.add(CardArchetypeScore(
-                oracle_id=job.oracle_id,
-                classification_id=db_cls.id,
-                archetype=archetype,
-                score=score,
-            ))
+            session.add(
+                CardArchetypeScore(
+                    oracle_id=job.oracle_id,
+                    classification_id=db_cls.id,
+                    archetype=archetype,
+                    score=score,
+                )
+            )
 
         role_dict = classification.role_power.model_dump(exclude_none=True)
         for role, score in role_dict.items():
-            session.add(CardPowerScore(
+            session.add(
+                CardPowerScore(
+                    oracle_id=job.oracle_id,
+                    classification_id=db_cls.id,
+                    role=role,
+                    score=score,
+                )
+            )
+        session.add(
+            CardPowerScore(
                 oracle_id=job.oracle_id,
                 classification_id=db_cls.id,
-                role=role,
-                score=score,
-            ))
-        session.add(CardPowerScore(
-            oracle_id=job.oracle_id,
-            classification_id=db_cls.id,
-            role="general",
-            score=classification.general_commander_power,
-        ))
+                role="general",
+                score=classification.general_commander_power,
+            )
+        )
 
         bracket_dict = classification.bracket_fit.model_dump(exclude_none=True)
         for bracket, score in bracket_dict.items():
-            session.add(CardBracketScore(
-                oracle_id=job.oracle_id,
-                classification_id=db_cls.id,
-                bracket_level=bracket,
-                score=score,
-            ))
+            session.add(
+                CardBracketScore(
+                    oracle_id=job.oracle_id,
+                    classification_id=db_cls.id,
+                    bracket_level=bracket,
+                    score=score,
+                )
+            )
 
         for hook in classification.commander_context_notes:
-            session.add(CardSynergyHook(
-                oracle_id=job.oracle_id,
-                classification_id=db_cls.id,
-                hook=hook,
-            ))
+            session.add(
+                CardSynergyHook(
+                    oracle_id=job.oracle_id,
+                    classification_id=db_cls.id,
+                    hook=hook,
+                )
+            )
 
     job.status = JobStatus.completed
     job.completed_at = now
 
 
-def _process_job(job_id: str, classifier: BaseClassifier, reclassify: bool) -> tuple[str, bool, str]:
+def _process_job(
+    job_id: str, classifier: BaseClassifier, reclassify: bool
+) -> tuple[str, bool, str]:
     """Returns (job_id, success, message). Runs in a thread."""
     for attempt in range(settings.classifier_retry_attempts):
         try:
@@ -179,15 +209,20 @@ def _process_job(job_id: str, classifier: BaseClassifier, reclassify: bool) -> t
             with get_session() as session:
                 job = session.get(CardClassificationJob, job_id)
                 _store_classification(
-                    session, job, classification, classifier.version,
-                    raw_dict, is_valid, errors,
+                    session,
+                    job,
+                    classification,
+                    classifier.version,
+                    raw_dict,
+                    is_valid,
+                    errors,
                 )
 
             return job_id, True, "ok"
 
         except Exception as exc:
             if attempt < settings.classifier_retry_attempts - 1:
-                time.sleep(settings.classifier_retry_delay_s * (2 ** attempt))
+                time.sleep(settings.classifier_retry_delay_s * (2**attempt))
                 continue
 
             try:
@@ -216,7 +251,9 @@ def run_classification(
     with get_session() as session:
         query = (
             select(CardClassificationJob)
-            .where(CardClassificationJob.status.in_([JobStatus.pending, JobStatus.failed]))
+            .where(
+                CardClassificationJob.status.in_([JobStatus.pending, JobStatus.failed])
+            )
             .order_by(CardClassificationJob.created_at)
         )
         if edhrec_only:
@@ -241,20 +278,31 @@ def run_classification(
         if "deepseek" in classifier.version:
             cost = (total_input / 1_000_000 * 0.14) + (total_output / 1_000_000 * 0.28)
             print(f"Estimated cost (DeepSeek Flash, no cache): ${cost:.2f}")
-            cost_cached = (total_input / 1_000_000 * 0.003) + (total_output / 1_000_000 * 0.28)
+            cost_cached = (total_input / 1_000_000 * 0.003) + (
+                total_output / 1_000_000 * 0.28
+            )
             print(f"Estimated cost (DeepSeek Flash, with cache): ${cost_cached:.2f}")
         elif "anthropic" in classifier.version:
             if "haiku" in classifier.version:
-                cost = (total_input / 1_000_000 * 0.80) + (total_output / 1_000_000 * 4.0)
+                cost = (total_input / 1_000_000 * 0.80) + (
+                    total_output / 1_000_000 * 4.0
+                )
             else:
-                cost = (total_input / 1_000_000 * 3.0) + (total_output / 1_000_000 * 15.0)
+                cost = (total_input / 1_000_000 * 3.0) + (
+                    total_output / 1_000_000 * 15.0
+                )
             print(f"Estimated cost: ${cost:.2f}")
         return stats
 
-    print(f"Starting classification: {stats.total} jobs | classifier: {classifier.version} | workers: {settings.classifier_workers}")
+    print(
+        f"Starting classification: {stats.total} jobs | classifier: {classifier.version} | workers: {settings.classifier_workers}"
+    )
 
     with ThreadPoolExecutor(max_workers=settings.classifier_workers) as pool:
-        futures = {pool.submit(_process_job, job_id, classifier, reclassify): job_id for job_id in job_ids}
+        futures = {
+            pool.submit(_process_job, job_id, classifier, reclassify): job_id
+            for job_id in job_ids
+        }
 
         for i, future in enumerate(as_completed(futures), 1):
             job_id, success, message = future.result()

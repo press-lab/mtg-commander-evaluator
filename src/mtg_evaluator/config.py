@@ -4,7 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-    database_url: str = "postgresql://mtg_user:mtg_password@localhost:5432/mtg_evaluator"
+    database_url: str = (
+        "postgresql://mtg_user:mtg_password@localhost:5432/mtg_evaluator"
+    )
     scryfall_rate_limit_ms: int = 100
     data_dir: str = "./data"
     log_level: str = "INFO"

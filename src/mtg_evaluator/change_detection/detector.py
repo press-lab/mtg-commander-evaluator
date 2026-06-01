@@ -5,8 +5,12 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from mtg_evaluator.db.models import (
-    Card, RawScryfallCard, CardIngestionRun, CardClassificationJob,
-    IngestionStatus, JobStatus,
+    Card,
+    RawScryfallCard,
+    CardIngestionRun,
+    CardClassificationJob,
+    IngestionStatus,
+    JobStatus,
 )
 from mtg_evaluator.ingestion.scryfall import compute_oracle_text_checksum
 
@@ -19,7 +23,9 @@ class ChangeDetectionResult:
     jobs_created: int
 
 
-def detect_changes(session: Session, run_id: str | None = None) -> ChangeDetectionResult:
+def detect_changes(
+    session: Session, run_id: str | None = None
+) -> ChangeDetectionResult:
     if run_id:
         run = session.get(CardIngestionRun, run_id)
     else:
@@ -43,7 +49,8 @@ def detect_changes(session: Session, run_id: str | None = None) -> ChangeDetecti
     now = datetime.utcnow()
 
     oracle_ids_with_jobs: set[str] = set(
-        row[0] for row in session.execute(
+        row[0]
+        for row in session.execute(
             select(CardClassificationJob.oracle_id).distinct()
         ).all()
     )

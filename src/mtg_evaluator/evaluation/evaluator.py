@@ -5,14 +5,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from mtg_evaluator.db.models import (
-    Card, CardClassification, CardFunction, CardArchetypeScore,
-    CardPowerScore, CardBracketScore, EDHRecCardStats,
-    Decklist, DeckCard, DeckEvaluation,
+    Card,
+    CardClassification,
+    CardFunction,
+    CardArchetypeScore,
+    CardPowerScore,
+    CardBracketScore,
+    EDHRecCardStats,
+    Decklist,
+    DeckCard,
+    DeckEvaluation,
 )
 from mtg_evaluator.evaluation.parser import ParsedDecklist, ParsedCard
 from mtg_evaluator.evaluation.bracket_llm import classify_bracket, BracketResult
 from mtg_evaluator.db.models import SpellbookCombo, SpellbookComboCard
-
 
 # Minimum recommended counts per function for a well-structured deck.
 # "removal" here counts *all* targeted interaction (removal + creature_removal).
@@ -20,7 +26,7 @@ from mtg_evaluator.db.models import SpellbookCombo, SpellbookComboCard
 _ROLE_MINIMUMS = {
     "ramp": 10,
     "draw": 8,
-    "removal": 6,       # targeted removal (any type): target 6-8
+    "removal": 6,  # targeted removal (any type): target 6-8
     "board_wipe": 2,
     "protection": 2,
 }
@@ -28,60 +34,134 @@ _ROLE_MINIMUMS = {
 _BRACKET_LABELS = ["casual", "bracket_2", "bracket_3", "bracket_4", "cedh"]
 
 # Hard B4 floor — mass land denial cards (Brackets 1-3 explicitly prohibit these)
-MASS_LAND_DENIAL: frozenset[str] = frozenset({
-    "Armageddon", "Ravages of War", "Catastrophe", "Decree of Annihilation",
-    "Ruination", "From the Ashes", "Jokulhaups", "Obliterate",
-    "Myojin of Infinite Rage", "Impending Disaster", "Boom // Bust",
-    "Winter Orb", "Static Orb", "Stasis", "Mana Vortex", "Land Equilibrium",
-    "Tectonic Break", "Sunder", "Keldon Firebombers", "Thoughts of Ruin",
-    "Cataclysm", "Apocalypse",
-})
+MASS_LAND_DENIAL: frozenset[str] = frozenset(
+    {
+        "Armageddon",
+        "Ravages of War",
+        "Catastrophe",
+        "Decree of Annihilation",
+        "Ruination",
+        "From the Ashes",
+        "Jokulhaups",
+        "Obliterate",
+        "Myojin of Infinite Rage",
+        "Impending Disaster",
+        "Boom // Bust",
+        "Winter Orb",
+        "Static Orb",
+        "Stasis",
+        "Mana Vortex",
+        "Land Equilibrium",
+        "Tectonic Break",
+        "Sunder",
+        "Keldon Firebombers",
+        "Thoughts of Ruin",
+        "Cataclysm",
+        "Apocalypse",
+    }
+)
 
 # Extra turn cards — standalone extra turns are B3-ok; only infinite loops (via Spellbook
 # R-tagged combos) constitute a hard B4 floor. We track presence for LLM context.
-EXTRA_TURN_CARDS: frozenset[str] = frozenset({
-    "Time Walk", "Temporal Manipulation", "Time Warp", "Temporal Mastery",
-    "Nexus of Fate", "Alrund's Epiphany", "Expropriate", "Beacon of Tomorrows",
-    "Part the Waterveil", "Capture of Jingzhou", "Walk the Aeons",
-    "Savor the Moment", "Emrakul, the Promised End", "Magistrate's Scepter",
-    "Medomai the Ageless", "Seedtime", "Notorious Throng", "Karn's Temporal Sundering",
-    "Temporal Trespass", "Teferi, Master of Time", "Wandering Archaic",
-})
+EXTRA_TURN_CARDS: frozenset[str] = frozenset(
+    {
+        "Time Walk",
+        "Temporal Manipulation",
+        "Time Warp",
+        "Temporal Mastery",
+        "Nexus of Fate",
+        "Alrund's Epiphany",
+        "Expropriate",
+        "Beacon of Tomorrows",
+        "Part the Waterveil",
+        "Capture of Jingzhou",
+        "Walk the Aeons",
+        "Savor the Moment",
+        "Emrakul, the Promised End",
+        "Magistrate's Scepter",
+        "Medomai the Ageless",
+        "Seedtime",
+        "Notorious Throng",
+        "Karn's Temporal Sundering",
+        "Temporal Trespass",
+        "Teferi, Master of Time",
+        "Wandering Archaic",
+    }
+)
 
 # Official Wizards of the Coast Game Changers list (February 2026, 53 cards).
 # Brackets 1–2: 0 allowed. Bracket 3: up to 3. Brackets 4–5: unlimited.
 # Source: https://magic.wizards.com/en/news/announcements/commander-brackets-beta-update-february-9-2026
-GAME_CHANGERS: frozenset[str] = frozenset({
-    # White
-    "Drannith Magistrate", "Enlightened Tutor", "Farewell", "Humility",
-    "Teferi's Protection", "Smothering Tithe",
-    # Blue
-    "Consecrated Sphinx", "Cyclonic Rift", "Force of Will", "Fierce Guardianship",
-    "Gifts Ungiven", "Intuition", "Mystical Tutor", "Narset, Parter of Veils",
-    "Rhystic Study", "Thassa's Oracle",
-    # Black
-    "Ad Nauseam", "Bolas's Citadel", "Braids, Cabal Minion", "Demonic Tutor",
-    "Imperial Seal", "Necropotence", "Opposition Agent", "Orcish Bowmasters",
-    "Tergrid, God of Fright // Tergrid's Lantern", "Vampiric Tutor",
-    # Red
-    "Gamble", "Jeska's Will", "Underworld Breach",
-    # Green
-    "Biorhythm", "Crop Rotation", "Natural Order", "Seedborn Muse",
-    "Survival of the Fittest", "Worldly Tutor",
-    # Multicolor
-    "Aura Shards", "Coalition Victory", "Grand Arbiter Augustin IV", "Notion Thief",
-    # Colorless / Lands
-    "Ancient Tomb", "Chrome Mox", "Field of the Dead", "Gaea's Cradle",
-    "Glacial Chasm", "Grim Monolith", "Lion's Eye Diamond", "Mana Vault",
-    "Mishra's Workshop", "Mox Diamond", "Panoptic Mirror", "Serra's Sanctum",
-    "The One Ring", "The Tabernacle at Pendrell Vale",
-})
+GAME_CHANGERS: frozenset[str] = frozenset(
+    {
+        # White
+        "Drannith Magistrate",
+        "Enlightened Tutor",
+        "Farewell",
+        "Humility",
+        "Teferi's Protection",
+        "Smothering Tithe",
+        # Blue
+        "Consecrated Sphinx",
+        "Cyclonic Rift",
+        "Force of Will",
+        "Fierce Guardianship",
+        "Gifts Ungiven",
+        "Intuition",
+        "Mystical Tutor",
+        "Narset, Parter of Veils",
+        "Rhystic Study",
+        "Thassa's Oracle",
+        # Black
+        "Ad Nauseam",
+        "Bolas's Citadel",
+        "Braids, Cabal Minion",
+        "Demonic Tutor",
+        "Imperial Seal",
+        "Necropotence",
+        "Opposition Agent",
+        "Orcish Bowmasters",
+        "Tergrid, God of Fright // Tergrid's Lantern",
+        "Vampiric Tutor",
+        # Red
+        "Gamble",
+        "Jeska's Will",
+        "Underworld Breach",
+        # Green
+        "Biorhythm",
+        "Crop Rotation",
+        "Natural Order",
+        "Seedborn Muse",
+        "Survival of the Fittest",
+        "Worldly Tutor",
+        # Multicolor
+        "Aura Shards",
+        "Coalition Victory",
+        "Grand Arbiter Augustin IV",
+        "Notion Thief",
+        # Colorless / Lands
+        "Ancient Tomb",
+        "Chrome Mox",
+        "Field of the Dead",
+        "Gaea's Cradle",
+        "Glacial Chasm",
+        "Grim Monolith",
+        "Lion's Eye Diamond",
+        "Mana Vault",
+        "Mishra's Workshop",
+        "Mox Diamond",
+        "Panoptic Mirror",
+        "Serra's Sanctum",
+        "The One Ring",
+        "The Tabernacle at Pendrell Vale",
+    }
+)
 
 
 @dataclass
 class ComboHit:
     spellbook_id: str
-    bracket_tag: str        # R/S/P/O/C/E
+    bracket_tag: str  # R/S/P/O/C/E
     card_names: list[str]
     results_description: str | None
 
@@ -94,8 +174,9 @@ def _find_combos(session: Session, oracle_ids: set[str]) -> list[ComboHit]:
     # Find combo_ids where ALL cards have oracle_ids in the deck
     # We only match combos where every card was resolved to an oracle_id
     rows = session.execute(
-        select(SpellbookComboCard.combo_id, SpellbookComboCard.oracle_id)
-        .where(SpellbookComboCard.oracle_id.isnot(None))
+        select(SpellbookComboCard.combo_id, SpellbookComboCard.oracle_id).where(
+            SpellbookComboCard.oracle_id.isnot(None)
+        )
     ).all()
 
     # Group by combo_id
@@ -104,25 +185,32 @@ def _find_combos(session: Session, oracle_ids: set[str]) -> list[ComboHit]:
         combo_oracles.setdefault(combo_id, set()).add(oracle_id)
 
     matched_ids = [
-        cid for cid, card_set in combo_oracles.items()
+        cid
+        for cid, card_set in combo_oracles.items()
         if card_set and card_set.issubset(oracle_ids)
     ]
     if not matched_ids:
         return []
 
-    combos = session.execute(
-        select(SpellbookCombo).where(SpellbookCombo.spellbook_id.in_(matched_ids))
-    ).scalars().all()
+    combos = (
+        session.execute(
+            select(SpellbookCombo).where(SpellbookCombo.spellbook_id.in_(matched_ids))
+        )
+        .scalars()
+        .all()
+    )
 
     hits = []
     for combo in combos:
         card_names = [c.card_name for c in combo.cards if c.oracle_id in oracle_ids]
-        hits.append(ComboHit(
-            spellbook_id=combo.spellbook_id,
-            bracket_tag=combo.bracket_tag or "E",
-            card_names=card_names,
-            results_description=combo.results_description,
-        ))
+        hits.append(
+            ComboHit(
+                spellbook_id=combo.spellbook_id,
+                bracket_tag=combo.bracket_tag or "E",
+                card_names=card_names,
+                results_description=combo.results_description,
+            )
+        )
     return hits
 
 
@@ -174,12 +262,15 @@ class EvaluationResult:
 
 def _get_classifications(session: Session, oracle_ids: list[str]) -> dict[str, dict]:
     """Returns {oracle_id: {functions, archetype_scores, power_scores, bracket_scores}}"""
-    result: dict[str, dict] = {oid: {
-        "functions": [],
-        "archetype_scores": {},
-        "power_scores": {},
-        "bracket_scores": {},
-    } for oid in oracle_ids}
+    result: dict[str, dict] = {
+        oid: {
+            "functions": [],
+            "archetype_scores": {},
+            "power_scores": {},
+            "bracket_scores": {},
+        }
+        for oid in oracle_ids
+    }
 
     # Latest valid classification per card
     valid_cls = session.execute(
@@ -197,34 +288,50 @@ def _get_classifications(session: Session, oracle_ids: list[str]) -> dict[str, d
         return result
 
     for row in session.execute(
-        select(CardFunction.classification_id, CardFunction.function_name)
-        .where(CardFunction.classification_id.in_(cls_ids))
+        select(CardFunction.classification_id, CardFunction.function_name).where(
+            CardFunction.classification_id.in_(cls_ids)
+        )
     ).all():
-        oracle_id = next((o for o, c in cls_by_oracle.items() if c == row.classification_id), None)
+        oracle_id = next(
+            (o for o, c in cls_by_oracle.items() if c == row.classification_id), None
+        )
         if oracle_id:
             result[oracle_id]["functions"].append(row.function_name)
 
     for row in session.execute(
-        select(CardArchetypeScore.classification_id, CardArchetypeScore.archetype, CardArchetypeScore.score)
-        .where(CardArchetypeScore.classification_id.in_(cls_ids))
+        select(
+            CardArchetypeScore.classification_id,
+            CardArchetypeScore.archetype,
+            CardArchetypeScore.score,
+        ).where(CardArchetypeScore.classification_id.in_(cls_ids))
     ).all():
-        oracle_id = next((o for o, c in cls_by_oracle.items() if c == row.classification_id), None)
+        oracle_id = next(
+            (o for o, c in cls_by_oracle.items() if c == row.classification_id), None
+        )
         if oracle_id:
             result[oracle_id]["archetype_scores"][row.archetype] = row.score
 
     for row in session.execute(
-        select(CardPowerScore.classification_id, CardPowerScore.role, CardPowerScore.score)
-        .where(CardPowerScore.classification_id.in_(cls_ids))
+        select(
+            CardPowerScore.classification_id, CardPowerScore.role, CardPowerScore.score
+        ).where(CardPowerScore.classification_id.in_(cls_ids))
     ).all():
-        oracle_id = next((o for o, c in cls_by_oracle.items() if c == row.classification_id), None)
+        oracle_id = next(
+            (o for o, c in cls_by_oracle.items() if c == row.classification_id), None
+        )
         if oracle_id:
             result[oracle_id]["power_scores"][row.role] = row.score
 
     for row in session.execute(
-        select(CardBracketScore.classification_id, CardBracketScore.bracket_level, CardBracketScore.score)
-        .where(CardBracketScore.classification_id.in_(cls_ids))
+        select(
+            CardBracketScore.classification_id,
+            CardBracketScore.bracket_level,
+            CardBracketScore.score,
+        ).where(CardBracketScore.classification_id.in_(cls_ids))
     ).all():
-        oracle_id = next((o for o, c in cls_by_oracle.items() if c == row.classification_id), None)
+        oracle_id = next(
+            (o for o, c in cls_by_oracle.items() if c == row.classification_id), None
+        )
         if oracle_id:
             result[oracle_id]["bracket_scores"][row.bracket_level] = row.score
 
@@ -275,7 +382,9 @@ def _estimate_bracket(
     return bracket, gc_count
 
 
-def _compute_synergy_score(classifications: dict[str, dict], archetype: str | None) -> float | None:
+def _compute_synergy_score(
+    classifications: dict[str, dict], archetype: str | None
+) -> float | None:
     if not archetype or not classifications:
         return None
     scores = [
@@ -298,7 +407,9 @@ def _role_coverage(classifications: dict[str, dict]) -> list[RoleCoverage]:
     for role, minimum in _ROLE_MINIMUMS.items():
         if role == "removal":
             # Merge targeted removal + creature_removal into one bucket
-            count = function_counts.get("removal", 0) + function_counts.get("creature_removal", 0)
+            count = function_counts.get("removal", 0) + function_counts.get(
+                "creature_removal", 0
+            )
         else:
             count = function_counts.get(role, 0)
         coverage.append(RoleCoverage(function=role, count=count, minimum=minimum))
@@ -325,7 +436,9 @@ def _get_suggestions(
             Card.color_identity,
         )
         .join(Card, Card.oracle_id == CardArchetypeScore.oracle_id)
-        .join(EDHRecCardStats, EDHRecCardStats.oracle_id == CardArchetypeScore.oracle_id)
+        .join(
+            EDHRecCardStats, EDHRecCardStats.oracle_id == CardArchetypeScore.oracle_id
+        )
         .where(CardArchetypeScore.archetype == archetype)
         .where(CardArchetypeScore.score >= 4)
         .where(CardArchetypeScore.oracle_id.notin_(deck_oracle_ids))
@@ -339,11 +452,13 @@ def _get_suggestions(
         deck_colors = set(color_identity or [])
         if card_colors and not card_colors.issubset(deck_colors | {"C"}):
             continue
-        suggestions.append({
-            "name": row.name,
-            "oracle_id": row.oracle_id,
-            "archetype_score": row.score,
-        })
+        suggestions.append(
+            {
+                "name": row.name,
+                "oracle_id": row.oracle_id,
+                "archetype_score": row.score,
+            }
+        )
         if len(suggestions) >= limit:
             break
 
@@ -362,8 +477,7 @@ def evaluate_decklist(
 
     classified = {oid for oid, cls in classifications.items() if cls["functions"]}
     unclassified = [
-        pc.raw_name for pc in parsed.all_cards
-        if pc.oracle_id not in classified
+        pc.raw_name for pc in parsed.all_cards if pc.oracle_id not in classified
     ]
 
     all_card_names = [pc.raw_name for pc in parsed.all_cards]
@@ -380,10 +494,13 @@ def evaluate_decklist(
     coverage = _role_coverage(classifications)
     gaps = [
         f"Low {rc.function.replace('_', ' ')}: {rc.count}/{rc.minimum} recommended"
-        for rc in coverage if not rc.meets_minimum
+        for rc in coverage
+        if not rc.meets_minimum
     ]
 
-    commander_card = session.get(Card, parsed.commander.oracle_id) if parsed.commander else None
+    commander_card = (
+        session.get(Card, parsed.commander.oracle_id) if parsed.commander else None
+    )
     color_identity = list(commander_card.color_identity or []) if commander_card else []
 
     # LLM bracket classification — hard floors enforced inside classify_bracket.
@@ -411,7 +528,9 @@ def evaluate_decklist(
         )
 
     suggestions = _get_suggestions(
-        session, archetype, bracket,
+        session,
+        archetype,
+        bracket,
         deck_oracle_ids=set(all_oracle_ids),
         color_identity=color_identity,
     )
@@ -429,12 +548,14 @@ def evaluate_decklist(
     session.flush()
 
     for pc in parsed.all_cards:
-        session.add(DeckCard(
-            decklist_id=decklist.id,
-            oracle_id=pc.oracle_id,
-            quantity=pc.quantity,
-            is_commander=pc.is_commander,
-        ))
+        session.add(
+            DeckCard(
+                decklist_id=decklist.id,
+                oracle_id=pc.oracle_id,
+                quantity=pc.quantity,
+                is_commander=pc.is_commander,
+            )
+        )
 
     db_eval = DeckEvaluation(
         decklist_id=decklist.id,

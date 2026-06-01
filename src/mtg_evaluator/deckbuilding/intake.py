@@ -8,6 +8,7 @@ Skips questions that are obvious from context:
 
 Used by CLI interactively, and later by API/chat with the same logic.
 """
+
 from __future__ import annotations
 
 from sqlalchemy import select
@@ -17,7 +18,9 @@ from mtg_evaluator.db.models import Card, CardArchetypeScore, CardClassification
 from mtg_evaluator.deckbuilding.request import DeckRequest, TutorDensity
 
 
-def _top_archetypes(session: Session, oracle_id: str, top_n: int = 5) -> list[tuple[str, float]]:
+def _top_archetypes(
+    session: Session, oracle_id: str, top_n: int = 5
+) -> list[tuple[str, float]]:
     """Return the top N archetypes by total score for a given commander oracle_id."""
     cls_row = session.execute(
         select(CardClassification.id)
@@ -44,7 +47,7 @@ def _top_archetypes(session: Session, oracle_id: str, top_n: int = 5) -> list[tu
 def _ask(prompt: str, options: list[str] | None = None) -> str:
     """Simple interactive prompt. In API mode this would be replaced."""
     if options:
-        formatted = "  ".join(f"[{i+1}] {o}" for i, o in enumerate(options))
+        formatted = "  ".join(f"[{i + 1}] {o}" for i, o in enumerate(options))
         print(f"\n{prompt}\n  {formatted}")
         while True:
             raw = input("  → ").strip()
@@ -74,12 +77,11 @@ def resolve_intake(
     If interactive=False, uses defaults for anything unspecified (for API use).
     """
     # Resolve commander
-    commander = session.scalars(
-        select(Card).where(Card.name == commander_name)
-    ).first()
+    commander = session.scalars(select(Card).where(Card.name == commander_name)).first()
     if not commander:
         # Try case-insensitive prefix match
         from sqlalchemy import func
+
         commander = session.scalars(
             select(Card)
             .where(func.lower(Card.name).like(f"{commander_name.lower()}%"))
@@ -97,9 +99,13 @@ def resolve_intake(
         if interactive:
             choice = _ask(
                 "What bracket are you building for?",
-                ["1 — Exhibition (casual theme)", "2 — Core (precon level)",
-                 "3 — Upgraded (focused synergy)", "4 — Optimized (fast/consistent)",
-                 "5 — cEDH (competitive)"],
+                [
+                    "1 — Exhibition (casual theme)",
+                    "2 — Core (precon level)",
+                    "3 — Upgraded (focused synergy)",
+                    "4 — Optimized (fast/consistent)",
+                    "5 — cEDH (competitive)",
+                ],
             )
             bracket = int(choice[0])
         else:
@@ -113,7 +119,9 @@ def resolve_intake(
             if archetype:
                 print(f"  Archetype: {archetype} (auto-selected — only viable option)")
         elif interactive:
-            options = [f"{a} (score {s:.1f}/5)" for a, s in archetypes] + ["other (type below)"]
+            options = [f"{a} (score {s:.1f}/5)" for a, s in archetypes] + [
+                "other (type below)"
+            ]
             choice = _ask(
                 f"Which playstyle? {commander.name} supports these archetypes:",
                 options,
@@ -128,7 +136,9 @@ def resolve_intake(
     # --- Combos (only relevant for B3+) ---
     if want_combos is None:
         if bracket <= 2:
-            want_combos = False   # B1/B2: no combo question, combos are casual-only anyway
+            want_combos = (
+                False  # B1/B2: no combo question, combos are casual-only anyway
+            )
         elif interactive:
             choice = _ask(
                 "Do you want combos included?",
@@ -148,7 +158,11 @@ def resolve_intake(
         elif interactive:
             choice = _ask(
                 "Tutor density?",
-                ["none — no tutors", "light — 1-3 efficient tutors", "heavy — tutor-dense"],
+                [
+                    "none — no tutors",
+                    "light — 1-3 efficient tutors",
+                    "heavy — tutor-dense",
+                ],
             )
             tutor_density = choice.split(" ")[0]  # type: ignore[assignment]
         else:

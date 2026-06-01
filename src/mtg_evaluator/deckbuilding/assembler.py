@@ -19,6 +19,7 @@ a 3-5 sentence explanation of the key choices.
 Lands are handled separately — we pre-select the best available lands
 from the pool, then the LLM fills the remaining 62-65 nonland slots.
 """
+
 from __future__ import annotations
 
 import re
@@ -28,7 +29,6 @@ import anthropic
 
 from mtg_evaluator.config import settings
 from mtg_evaluator.deckbuilding.pool import CardPool, PoolCard
-
 
 _SYSTEM_PROMPT = """\
 You are an expert Magic: The Gathering Commander deck builder. Given a scored candidate pool, \
@@ -94,7 +94,16 @@ _TOOL_SCHEMA = {
                 "description": "3-5 sentences. Explain the deck's gameplan, key synergies, and why specific high-impact cards were included or excluded.",
             },
         },
-        "required": ["lands", "ramp", "draw", "removal", "synergy", "combo", "other", "reasoning"],
+        "required": [
+            "lands",
+            "ramp",
+            "draw",
+            "removal",
+            "synergy",
+            "combo",
+            "other",
+            "reasoning",
+        ],
     },
 }
 
@@ -103,21 +112,27 @@ _TOOL_SCHEMA = {
 # Chrome Mox, etc.) fills the gap. Total mana sources stays ~40; it's just the
 # land/rock split that shifts.
 _ROLE_TARGETS = {
-    1: dict(lands=38, ramp=10, draw=8,  removal=6),
-    2: dict(lands=37, ramp=11, draw=9,  removal=6),
+    1: dict(lands=38, ramp=10, draw=8, removal=6),
+    2: dict(lands=37, ramp=11, draw=9, removal=6),
     3: dict(lands=36, ramp=12, draw=10, removal=7),
-    4: dict(lands=32, ramp=14, draw=10, removal=6),   # fast mana replaces 3-4 land slots
-    5: dict(lands=29, ramp=16, draw=11, removal=5),   # cEDH: maximize fast mana & interaction
+    4: dict(lands=32, ramp=14, draw=10, removal=6),  # fast mana replaces 3-4 land slots
+    5: dict(
+        lands=29, ramp=16, draw=11, removal=5
+    ),  # cEDH: maximize fast mana & interaction
 }
 
 # Validation minimums per bracket (what we'll warn on if underfilled).
 # Lands + ramp should sum to ~42 at any bracket for consistent mana.
 _VALIDATE_MINIMUMS = {
-    1: dict(lands=36, ramp=8,  draw=6, removal=4),
-    2: dict(lands=35, ramp=9,  draw=7, removal=4),
+    1: dict(lands=36, ramp=8, draw=6, removal=4),
+    2: dict(lands=35, ramp=9, draw=7, removal=4),
     3: dict(lands=33, ramp=10, draw=8, removal=5),
-    4: dict(lands=28, ramp=12, draw=8, removal=4),   # fast mana compensates for fewer lands
-    5: dict(lands=25, ramp=14, draw=9, removal=4),   # cEDH: 25+ lands is fine with 14+ rocks
+    4: dict(
+        lands=28, ramp=12, draw=8, removal=4
+    ),  # fast mana compensates for fewer lands
+    5: dict(
+        lands=25, ramp=14, draw=9, removal=4
+    ),  # cEDH: 25+ lands is fine with 14+ rocks
 }
 
 _BRACKET_DESC = {
@@ -134,7 +149,7 @@ class AssembledDeck:
     commander: str
     archetype: str | None
     bracket: int
-    has_partner: bool = False   # True when commander is a pair (e.g. "Tymna + Thrasios")
+    has_partner: bool = False  # True when commander is a pair (e.g. "Tymna + Thrasios")
 
     lands: list[str] = field(default_factory=list)
     ramp: list[str] = field(default_factory=list)
@@ -148,8 +163,15 @@ class AssembledDeck:
 
     @property
     def all_cards(self) -> list[str]:
-        return (self.lands + self.ramp + self.draw + self.removal
-                + self.synergy + self.combo + self.other)
+        return (
+            self.lands
+            + self.ramp
+            + self.draw
+            + self.removal
+            + self.synergy
+            + self.combo
+            + self.other
+        )
 
     @property
     def total(self) -> int:
@@ -184,7 +206,9 @@ class AssembledDeck:
         if self.reasoning:
             for sentence in self.reasoning.split(". "):
                 if sentence.strip():
-                    lines.append(f"// {sentence.strip()}{'.' if not sentence.strip().endswith('.') else ''}")
+                    lines.append(
+                        f"// {sentence.strip()}{'.' if not sentence.strip().endswith('.') else ''}"
+                    )
 
         return "\n".join(lines)
 
@@ -237,8 +261,11 @@ def validate_assembled_deck(deck: AssembledDeck) -> list[str]:
                 )
 
     # 4. No empty card names
-    empty = [cat for cat in ("lands", "ramp", "draw", "removal", "synergy", "combo", "other")
-             if any(not n.strip() for n in (getattr(deck, cat) or []))]
+    empty = [
+        cat
+        for cat in ("lands", "ramp", "draw", "removal", "synergy", "combo", "other")
+        if any(not n.strip() for n in (getattr(deck, cat) or []))
+    ]
     if empty:
         warnings.append(f"Empty card names in categories: {', '.join(empty)}")
 
@@ -271,7 +298,9 @@ def assemble_deck(pool: CardPool, bracket: int = 3) -> AssembledDeck:
         combo = " [COMBO]" if c.combo_ids else ""
         return f"  {c.name}{gc}{combo} | {c.tier} | {fns} | score={c.score:.0f}"
 
-    land_section = "\n".join(_fmt_card(c) for c in land_candidates[:40]) or "  (no lands in pool)"
+    land_section = (
+        "\n".join(_fmt_card(c) for c in land_candidates[:40]) or "  (no lands in pool)"
+    )
     nonland_section = "\n".join(_fmt_card(c) for c in nonland_candidates[:100])
 
     # Combo summary
@@ -281,7 +310,9 @@ def assemble_deck(pool: CardPool, bracket: int = 3) -> AssembledDeck:
             f"  [{combo.bracket_tag}] {' + '.join(combo.card_names)}"
             + (f" → {combo.results_description}" if combo.results_description else "")
         )
-    combo_section = ("\nKnown combos in pool:\n" + "\n".join(combo_lines)) if combo_lines else ""
+    combo_section = (
+        ("\nKnown combos in pool:\n" + "\n".join(combo_lines)) if combo_lines else ""
+    )
 
     role_target_line = (
         f"Role targets: {targets['lands']} lands, {targets['ramp']} ramp, "
@@ -291,9 +322,9 @@ def assemble_deck(pool: CardPool, bracket: int = 3) -> AssembledDeck:
     want_combos = "YES — include combo pieces" if pool.combos else "No combos requested"
 
     user_msg = f"""Commander: {pool.commander_name}
-Archetype: {pool.archetype or 'general goodstuff'}
-Colors: {', '.join(pool.color_identity) or 'Colorless'}
-Bracket: {_BRACKET_DESC.get(bracket, f'B{bracket}')}
+Archetype: {pool.archetype or "general goodstuff"}
+Colors: {", ".join(pool.color_identity) or "Colorless"}
+Bracket: {_BRACKET_DESC.get(bracket, f"B{bracket}")}
 {role_target_line}
 Combos: {want_combos}
 {combo_section}
@@ -334,7 +365,7 @@ Select exactly {deck_size} cards total across all categories. Card names must ma
 
     def _clean(names: list) -> list[str]:
         out = []
-        for n in (names or []):
+        for n in names or []:
             name = str(n).strip()
             if name in valid_names:
                 out.append(name)

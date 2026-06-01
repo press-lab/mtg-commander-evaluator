@@ -39,13 +39,17 @@ class DeepSeekClassifier(BaseClassifier):
         try:
             raw_dict = json.loads(raw_text)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"DeepSeek returned invalid JSON: {exc}\n\nRaw: {raw_text[:500]}") from exc
+            raise ValueError(
+                f"DeepSeek returned invalid JSON: {exc}\n\nRaw: {raw_text[:500]}"
+            ) from exc
 
         raw_dict["oracle_id"] = card.oracle_id
         raw_dict["card_name"] = card.name
 
         is_valid, errors, classification = validate_classification(raw_dict)
         if not is_valid:
-            raise ValueError(f"Classification failed validation for {card.name}: {errors}")
+            raise ValueError(
+                f"Classification failed validation for {card.name}: {errors}"
+            )
 
         return classification

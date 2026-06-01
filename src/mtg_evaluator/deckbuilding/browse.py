@@ -8,6 +8,7 @@ Card browser — no commander needed.
 Returns a ranked flat list of cards matching the filters,
 ordered by composite score (archetype fit + bracket fit + EDHREC popularity).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,8 +17,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from mtg_evaluator.db.models import (
-    Card, CardClassification, CardArchetypeScore, CardBracketScore,
-    CardFunction, EDHRecCardStats,
+    Card,
+    CardClassification,
+    CardArchetypeScore,
+    CardBracketScore,
+    CardFunction,
+    EDHRecCardStats,
 )
 from mtg_evaluator.evaluation.evaluator import GAME_CHANGERS
 from mtg_evaluator.deckbuilding.pool import _log_popularity
@@ -42,7 +47,7 @@ def browse_cards(
     session: Session,
     archetype: str | None = None,
     bracket: int = 3,
-    role: str | None = None,        # "ramp", "draw", "removal", "tutor", etc.
+    role: str | None = None,  # "ramp", "draw", "removal", "tutor", etc.
     colors: list[str] | None = None,
     limit: int = 100,
     min_archetype_score: float = 2.0,
@@ -77,17 +82,19 @@ def browse_cards(
         .join(cls_subq, cls_subq.c.oracle_id == Card.oracle_id)
         .join(
             CardArchetypeScore,
-            (CardArchetypeScore.classification_id == cls_subq.c.id) &
-            (CardArchetypeScore.archetype == (archetype or "")),
+            (CardArchetypeScore.classification_id == cls_subq.c.id)
+            & (CardArchetypeScore.archetype == (archetype or "")),
             isouter=True,
         )
         .join(
             CardBracketScore,
-            (CardBracketScore.classification_id == cls_subq.c.id) &
-            (CardBracketScore.bracket_level == bracket_key),
+            (CardBracketScore.classification_id == cls_subq.c.id)
+            & (CardBracketScore.bracket_level == bracket_key),
             isouter=True,
         )
-        .join(EDHRecCardStats, EDHRecCardStats.oracle_id == Card.oracle_id, isouter=True)
+        .join(
+            EDHRecCardStats, EDHRecCardStats.oracle_id == Card.oracle_id, isouter=True
+        )
     )
 
     if archetype:
@@ -103,8 +110,9 @@ def browse_cards(
     fn_map: dict[str, list[str]] = {}
     if oracle_to_cls:
         fn_rows = session.execute(
-            select(CardFunction.classification_id, CardFunction.function_name)
-            .where(CardFunction.classification_id.in_(oracle_to_cls.values()))
+            select(CardFunction.classification_id, CardFunction.function_name).where(
+                CardFunction.classification_id.in_(oracle_to_cls.values())
+            )
         ).all()
         for fn_row in fn_rows:
             oid = cls_to_oracle.get(fn_row.classification_id)
@@ -138,23 +146,23 @@ def browse_cards(
         arch = row.arch_score or 0
         brack = row.brack_score or 0
         score = round(
-            (arch / 5.0) * 40 +
-            (brack / 5.0) * 30 +
-            popularity * 30,
+            (arch / 5.0) * 40 + (brack / 5.0) * 30 + popularity * 30,
             2,
         )
 
-        results.append(BrowseCard(
-            name=row.name,
-            oracle_id=row.oracle_id,
-            type_line=row.type_line,
-            archetype_score=row.arch_score,
-            bracket_score=row.brack_score,
-            functions=functions,
-            is_game_changer=is_gc,
-            edhrec_decks=row.num_decks,
-            score=score,
-        ))
+        results.append(
+            BrowseCard(
+                name=row.name,
+                oracle_id=row.oracle_id,
+                type_line=row.type_line,
+                archetype_score=row.arch_score,
+                bracket_score=row.brack_score,
+                functions=functions,
+                is_game_changer=is_gc,
+                edhrec_decks=row.num_decks,
+                score=score,
+            )
+        )
 
     results.sort(key=lambda c: c.score, reverse=True)
     return results[:limit]

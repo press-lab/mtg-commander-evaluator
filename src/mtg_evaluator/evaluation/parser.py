@@ -9,6 +9,7 @@ Supported formats:
 Commander marked by appending *CMDR* or placing before a blank line headed "Commander".
 MTGO/Moxfield export format also supported.
 """
+
 import re
 from dataclasses import dataclass, field
 
@@ -136,7 +137,9 @@ def parse_decklist(raw: str, session: Session) -> ParsedDecklist:
             unresolved.append(name)
             continue
 
-        pc = ParsedCard(raw_name=name, oracle_id=oracle_id, quantity=qty, is_commander=is_cmdr)
+        pc = ParsedCard(
+            raw_name=name, oracle_id=oracle_id, quantity=qty, is_commander=is_cmdr
+        )
 
         if is_cmdr:
             card_row = session.get(Card, oracle_id)

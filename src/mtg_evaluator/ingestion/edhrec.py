@@ -101,7 +101,9 @@ def run_edhrec_ingestion(
     top_n = settings.edhrec_top_n
 
     if json_file:
-        print(f"Loading EDHREC data from {json_file} (pagination disabled in file mode) ...")
+        print(
+            f"Loading EDHREC data from {json_file} (pagination disabled in file mode) ..."
+        )
         first_data = json.loads(json_file.read_text(encoding="utf-8"))
         all_cards = _collect_all_cards(first_data, top_n, client=None)
     else:
@@ -139,13 +141,15 @@ def run_edhrec_ingestion(
         oracle_id = name_map.get(name)
         if not oracle_id:
             continue
-        rows.append({
-            "oracle_id": oracle_id,
-            "card_name": name,
-            "num_decks": card.get("num_decks", 0),
-            "rank": rank,
-            "fetched_at": now,
-        })
+        rows.append(
+            {
+                "oracle_id": oracle_id,
+                "card_name": name,
+                "num_decks": card.get("num_decks", 0),
+                "rank": rank,
+                "fetched_at": now,
+            }
+        )
 
     if not rows:
         print("No cards matched. Verify EDHREC URL or card name format.")
@@ -166,5 +170,7 @@ def run_edhrec_ingestion(
 
     matched = len(rows)
     skipped = len(all_cards) - matched
-    print(f"Upserted {matched} cards into edhrec_card_stats. ({skipped} names unmatched)")
+    print(
+        f"Upserted {matched} cards into edhrec_card_stats. ({skipped} names unmatched)"
+    )
     return matched

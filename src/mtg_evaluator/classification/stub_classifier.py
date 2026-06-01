@@ -43,7 +43,9 @@ class StubClassifier(BaseClassifier):
             warnings=[],
         )
 
-    def _infer_functions(self, oracle_text: str, type_line: str) -> list[CardFunctionEnum]:
+    def _infer_functions(
+        self, oracle_text: str, type_line: str
+    ) -> list[CardFunctionEnum]:
         text = oracle_text.lower()
         functions: list[CardFunctionEnum] = []
 

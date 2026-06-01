@@ -4,6 +4,7 @@ Revision ID: 002
 Revises: 001
 Create Date: 2024-01-02 00:00:00.000000
 """
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
@@ -17,7 +18,12 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "edhrec_card_stats",
-        sa.Column("oracle_id", UUID(as_uuid=False), sa.ForeignKey("cards.oracle_id"), primary_key=True),
+        sa.Column(
+            "oracle_id",
+            UUID(as_uuid=False),
+            sa.ForeignKey("cards.oracle_id"),
+            primary_key=True,
+        ),
         sa.Column("card_name", sa.Text, nullable=False),
         sa.Column("num_decks", sa.Integer, nullable=False),
         sa.Column("rank", sa.Integer, nullable=False),

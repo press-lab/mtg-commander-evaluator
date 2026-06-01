@@ -12,12 +12,18 @@ if sys.stdout.encoding != "utf-8":
 if sys.stderr.encoding != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
-app = typer.Typer(name="mtg-evaluator", help="MTG Commander Evaluator — data pipeline CLI.")
+app = typer.Typer(
+    name="mtg-evaluator", help="MTG Commander Evaluator — data pipeline CLI."
+)
 
 
 @app.command("ingest-scryfall")
 def ingest_scryfall(
-    use_cache: bool = typer.Option(False, "--use-cache", help="Use most recent cached bulk file instead of downloading."),
+    use_cache: bool = typer.Option(
+        False,
+        "--use-cache",
+        help="Use most recent cached bulk file instead of downloading.",
+    ),
 ) -> None:
     """Download Scryfall oracle_cards bulk data and store raw JSON in the database."""
     from mtg_evaluator.db.connection import get_session
@@ -31,7 +37,11 @@ def ingest_scryfall(
 
 @app.command("normalize-cards")
 def normalize_cards(
-    run_id: Optional[str] = typer.Option(None, "--run-id", help="Specific ingestion run ID to normalize. Defaults to latest."),
+    run_id: Optional[str] = typer.Option(
+        None,
+        "--run-id",
+        help="Specific ingestion run ID to normalize. Defaults to latest.",
+    ),
 ) -> None:
     """Normalize raw Scryfall data into structured cards tables."""
     from mtg_evaluator.db.connection import get_session
@@ -44,7 +54,11 @@ def normalize_cards(
 
 @app.command("detect-card-changes")
 def detect_card_changes(
-    run_id: Optional[str] = typer.Option(None, "--run-id", help="Specific ingestion run ID to diff against. Defaults to latest."),
+    run_id: Optional[str] = typer.Option(
+        None,
+        "--run-id",
+        help="Specific ingestion run ID to diff against. Defaults to latest.",
+    ),
 ) -> None:
     """Detect new or changed cards and create classification jobs."""
     from mtg_evaluator.db.connection import get_session
@@ -61,8 +75,16 @@ def detect_card_changes(
 
 @app.command("ingest-edhrec-top")
 def ingest_edhrec_top(
-    json_file: Optional[Path] = typer.Option(None, "--json-file", help="Load from a locally saved EDHREC JSON instead of fetching."),
-    save_json: Optional[Path] = typer.Option(None, "--save-json", help="Save raw EDHREC response to this path for inspection."),
+    json_file: Optional[Path] = typer.Option(
+        None,
+        "--json-file",
+        help="Load from a locally saved EDHREC JSON instead of fetching.",
+    ),
+    save_json: Optional[Path] = typer.Option(
+        None,
+        "--save-json",
+        help="Save raw EDHREC response to this path for inspection.",
+    ),
 ) -> None:
     """Fetch EDHREC top cards by deck count and store in edhrec_card_stats."""
     from mtg_evaluator.db.connection import get_session
@@ -90,11 +112,32 @@ def ingest_spellbook() -> None:
 
 @app.command("classify-cards")
 def classify_cards(
-    limit: Optional[int] = typer.Option(None, "--limit", "-n", help="Max number of jobs to process. Default: all pending."),
-    reclassify: bool = typer.Option(False, "--reclassify", help="Re-classify cards that already have a valid classification."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Estimate token count and cost without making API calls."),
-    provider: Optional[str] = typer.Option(None, "--provider", help="Override classifier provider: deepseek, anthropic, stub."),
-    edhrec_only: bool = typer.Option(True, "--edhrec-only/--all-cards", help="Only classify cards present in edhrec_card_stats."),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        "-n",
+        help="Max number of jobs to process. Default: all pending.",
+    ),
+    reclassify: bool = typer.Option(
+        False,
+        "--reclassify",
+        help="Re-classify cards that already have a valid classification.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Estimate token count and cost without making API calls.",
+    ),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        help="Override classifier provider: deepseek, anthropic, stub.",
+    ),
+    edhrec_only: bool = typer.Option(
+        True,
+        "--edhrec-only/--all-cards",
+        help="Only classify cards present in edhrec_card_stats.",
+    ),
 ) -> None:
     """Run LLM classification on pending card jobs."""
     from mtg_evaluator.classification.runner import run_classification
@@ -103,7 +146,9 @@ def classify_cards(
     if provider:
         settings.classifier = provider
 
-    stats = run_classification(limit=limit, reclassify=reclassify, dry_run=dry_run, edhrec_only=edhrec_only)
+    stats = run_classification(
+        limit=limit, reclassify=reclassify, dry_run=dry_run, edhrec_only=edhrec_only
+    )
 
     if not dry_run:
         typer.echo(
@@ -114,7 +159,9 @@ def classify_cards(
 
 @app.command("validate-classification-schema")
 def validate_classification_schema(
-    file: Path = typer.Argument(..., help="Path to a JSON file containing a classification object to validate."),
+    file: Path = typer.Argument(
+        ..., help="Path to a JSON file containing a classification object to validate."
+    ),
 ) -> None:
     """Validate a JSON file against the CardClassification schema."""
     from mtg_evaluator.classification.validator import validate_classification
@@ -131,7 +178,9 @@ def validate_classification_schema(
     if is_valid:
         typer.echo("✓ Valid classification schema.")
         if classification:
-            typer.echo(f"  Card: {classification.card_name} ({classification.oracle_id})")
+            typer.echo(
+                f"  Card: {classification.card_name} ({classification.oracle_id})"
+            )
             typer.echo(f"  Functions: {', '.join(classification.functions)}")
             typer.echo(f"  General power: {classification.general_commander_power}/5")
     else:
@@ -143,7 +192,9 @@ def validate_classification_schema(
 
 @app.command("evaluate-deck")
 def evaluate_deck(
-    decklist_file: Optional[Path] = typer.Option(None, "--file", "-f", help="Path to decklist text file."),
+    decklist_file: Optional[Path] = typer.Option(
+        None, "--file", "-f", help="Path to decklist text file."
+    ),
     name: str = typer.Option("My Deck", "--name", "-n", help="Deck name."),
 ) -> None:
     """Evaluate a Commander decklist — role coverage, bracket estimate, archetype, suggestions."""
@@ -154,7 +205,9 @@ def evaluate_deck(
     if decklist_file:
         raw = decklist_file.read_text(encoding="utf-8")
     else:
-        typer.echo("Paste your decklist below (blank line + Ctrl-Z on Windows to finish):")
+        typer.echo(
+            "Paste your decklist below (blank line + Ctrl-Z on Windows to finish):"
+        )
         lines = []
         try:
             while True:
@@ -172,7 +225,11 @@ def evaluate_deck(
         typer.echo(f"Commander : {result.commander_name}")
     typer.echo(f"Archetype : {result.archetype_guess or 'unknown'}")
     typer.echo(f"Bracket   : {result.bracket_estimate or 'unknown'}")
-    typer.echo(f"Synergy   : {result.synergy_score}/5" if result.synergy_score else "Synergy   : n/a")
+    typer.echo(
+        f"Synergy   : {result.synergy_score}/5"
+        if result.synergy_score
+        else "Synergy   : n/a"
+    )
 
     typer.echo("\n--- Role Coverage ---")
     for rc in result.role_coverage:
@@ -190,19 +247,36 @@ def evaluate_deck(
             typer.echo(f"  + {s['name']} (archetype score: {s['archetype_score']}/5)")
 
     if result.unresolved_cards:
-        typer.echo(f"\n  {len(result.unresolved_cards)} card(s) not found in database: {', '.join(result.unresolved_cards[:5])}")
+        typer.echo(
+            f"\n  {len(result.unresolved_cards)} card(s) not found in database: {', '.join(result.unresolved_cards[:5])}"
+        )
     if result.unclassified_cards:
-        typer.echo(f"  {len(result.unclassified_cards)} card(s) have no classification yet.")
+        typer.echo(
+            f"  {len(result.unclassified_cards)} card(s) have no classification yet."
+        )
 
     typer.echo(f"\nDecklist saved: {result.decklist_id}")
 
 
 @app.command("find-commanders")
 def find_commanders_cmd(
-    archetype: str = typer.Argument(..., help="Archetype to build around (e.g. sacrifice, tokens, midrange)."),
-    colors: Optional[str] = typer.Option(None, "--colors", "-c", help="Color filter, e.g. 'WUBR'. Commander must fit within these colors."),
-    max_colors: Optional[int] = typer.Option(None, "--max-colors", help="Max number of colors (e.g. 2 = mono or two-color only)."),
-    limit: int = typer.Option(20, "--limit", "-n", help="Number of commanders to show."),
+    archetype: str = typer.Argument(
+        ..., help="Archetype to build around (e.g. sacrifice, tokens, midrange)."
+    ),
+    colors: Optional[str] = typer.Option(
+        None,
+        "--colors",
+        "-c",
+        help="Color filter, e.g. 'WUBR'. Commander must fit within these colors.",
+    ),
+    max_colors: Optional[int] = typer.Option(
+        None,
+        "--max-colors",
+        help="Max number of colors (e.g. 2 = mono or two-color only).",
+    ),
+    limit: int = typer.Option(
+        20, "--limit", "-n", help="Number of commanders to show."
+    ),
 ) -> None:
     """Find commanders that support a given archetype. Starting point for archetype-first deck building."""
     from mtg_evaluator.db.connection import get_session
@@ -220,26 +294,43 @@ def find_commanders_cmd(
         )
 
     if not options:
-        typer.echo(f"No commanders found for archetype '{archetype}' with given filters.")
+        typer.echo(
+            f"No commanders found for archetype '{archetype}' with given filters."
+        )
         raise typer.Exit(1)
 
     typer.echo(f"\n── Commanders for '{archetype}' ──\n")
     typer.echo(f"  {'Name':<35} {'Colors':<10} {'Arch':>5}  {'EDHREC':>7}")
-    typer.echo(f"  {'-'*35} {'-'*10} {'-'*5}  {'-'*7}")
+    typer.echo(f"  {'-' * 35} {'-' * 10} {'-' * 5}  {'-' * 7}")
     for i, opt in enumerate(options, 1):
         colors_str = "".join(opt.color_identity) or "C"
         decks_str = f"{opt.edhrec_decks:,}" if opt.edhrec_decks else "—"
-        typer.echo(f"  {i:>2}. {opt.name:<33} {colors_str:<10} {opt.archetype_score:>5.1f}  {decks_str:>7}")
+        typer.echo(
+            f"  {i:>2}. {opt.name:<33} {colors_str:<10} {opt.archetype_score:>5.1f}  {decks_str:>7}"
+        )
 
-    typer.echo(f"\n  Run: mtg-evaluator build-deck \"<name>\" to build around one of these.")
+    typer.echo(
+        f'\n  Run: mtg-evaluator build-deck "<name>" to build around one of these.'
+    )
 
 
 @app.command("browse-cards")
 def browse_cards_cmd(
-    archetype: Optional[str] = typer.Option(None, "--archetype", "-a", help="Archetype filter (e.g. sacrifice, tokens)."),
-    bracket: int = typer.Option(3, "--bracket", "-b", min=1, max=5, help="Bracket 1-5."),
-    role: Optional[str] = typer.Option(None, "--role", "-r", help="Role filter: ramp, draw, removal, tutor, board_wipe, protection."),
-    colors: Optional[str] = typer.Option(None, "--colors", "-c", help="Color filter, e.g. 'BRG'."),
+    archetype: Optional[str] = typer.Option(
+        None, "--archetype", "-a", help="Archetype filter (e.g. sacrifice, tokens)."
+    ),
+    bracket: int = typer.Option(
+        3, "--bracket", "-b", min=1, max=5, help="Bracket 1-5."
+    ),
+    role: Optional[str] = typer.Option(
+        None,
+        "--role",
+        "-r",
+        help="Role filter: ramp, draw, removal, tutor, board_wipe, protection.",
+    ),
+    colors: Optional[str] = typer.Option(
+        None, "--colors", "-c", help="Color filter, e.g. 'BRG'."
+    ),
     limit: int = typer.Option(50, "--limit", "-n", help="Number of cards to show."),
 ) -> None:
     """Browse cards by archetype, bracket, and role — no commander needed."""
@@ -262,37 +353,61 @@ def browse_cards_cmd(
         typer.echo("No cards found for the given filters.")
         raise typer.Exit(1)
 
-    filter_desc = " | ".join(filter(None, [
-        archetype,
-        f"B{bracket}",
-        f"role={role}" if role else None,
-        f"colors={colors}" if colors else None,
-    ]))
+    filter_desc = " | ".join(
+        filter(
+            None,
+            [
+                archetype,
+                f"B{bracket}",
+                f"role={role}" if role else None,
+                f"colors={colors}" if colors else None,
+            ],
+        )
+    )
     typer.echo(f"\n── Cards: {filter_desc} ──\n")
     typer.echo(f"  {'Name':<35} {'Score':>6}  {'Arch':>5}  {'Brkt':>5}  Functions")
-    typer.echo(f"  {'-'*35} {'-'*6}  {'-'*5}  {'-'*5}  {'-'*20}")
+    typer.echo(f"  {'-' * 35} {'-' * 6}  {'-' * 5}  {'-' * 5}  {'-' * 20}")
     for card in cards:
         gc = "★" if card.is_game_changer else " "
         arch_str = f"{card.archetype_score:.1f}" if card.archetype_score else "  —"
         brkt_str = f"{card.bracket_score:.1f}" if card.bracket_score else "  —"
         fns = ", ".join(card.functions[:3]) if card.functions else "—"
-        typer.echo(f"  {gc}{card.name:<34} {card.score:>6.1f}  {arch_str:>5}  {brkt_str:>5}  {fns}")
+        typer.echo(
+            f"  {gc}{card.name:<34} {card.score:>6.1f}  {arch_str:>5}  {brkt_str:>5}  {fns}"
+        )
 
 
 @app.command("build-deck")
 def build_deck(
     commander: str = typer.Argument(..., help="Commander card name."),
-    bracket: Optional[int] = typer.Option(None, "--bracket", "-b", min=1, max=5, help="Bracket 1-5."),
-    archetype: Optional[str] = typer.Option(None, "--archetype", "-a", help="Archetype (e.g. midrange, tokens, sacrifice)."),
-    combos: Optional[bool] = typer.Option(None, "--combos/--no-combos", help="Include combos?"),
-    tutors: Optional[str] = typer.Option(None, "--tutors", help="Tutor density: none, light, heavy."),
-    pool_size: int = typer.Option(300, "--pool-size", "-n", help="Number of cards to return."),
-    non_interactive: bool = typer.Option(False, "--non-interactive", help="Use defaults for unspecified options (for scripting)."),
+    bracket: Optional[int] = typer.Option(
+        None, "--bracket", "-b", min=1, max=5, help="Bracket 1-5."
+    ),
+    archetype: Optional[str] = typer.Option(
+        None, "--archetype", "-a", help="Archetype (e.g. midrange, tokens, sacrifice)."
+    ),
+    combos: Optional[bool] = typer.Option(
+        None, "--combos/--no-combos", help="Include combos?"
+    ),
+    tutors: Optional[str] = typer.Option(
+        None, "--tutors", help="Tutor density: none, light, heavy."
+    ),
+    pool_size: int = typer.Option(
+        300, "--pool-size", "-n", help="Number of cards to return."
+    ),
+    non_interactive: bool = typer.Option(
+        False,
+        "--non-interactive",
+        help="Use defaults for unspecified options (for scripting).",
+    ),
 ) -> None:
     """Build a Commander deck card pool — ranked candidates matching your preferences."""
     import io
+
     if sys.stdout.encoding != "utf-8":
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace"
+        )
 
     from mtg_evaluator.db.connection import get_session
     from mtg_evaluator.deckbuilding.intake import resolve_intake
@@ -311,12 +426,16 @@ def build_deck(
         request.pool_size = pool_size
         pool = build_card_pool(session, request)
 
-    typer.echo(f"\n{'='*70}")
-    typer.echo(f"  DECK POOL: {pool.commander_name}  |  {pool.request.bracket_label}  |  {pool.archetype or 'unknown'}")
-    typer.echo(f"  Colors: {' '.join(pool.color_identity or ['C'])}  |  "
-               f"Combos: {'yes' if request.want_combos else 'no'}  |  "
-               f"Tutors: {request.tutor_density}")
-    typer.echo(f"{'='*70}")
+    typer.echo(f"\n{'=' * 70}")
+    typer.echo(
+        f"  DECK POOL: {pool.commander_name}  |  {pool.request.bracket_label}  |  {pool.archetype or 'unknown'}"
+    )
+    typer.echo(
+        f"  Colors: {' '.join(pool.color_identity or ['C'])}  |  "
+        f"Combos: {'yes' if request.want_combos else 'no'}  |  "
+        f"Tutors: {request.tutor_density}"
+    )
+    typer.echo(f"{'=' * 70}")
 
     if pool.combos:
         typer.echo(f"\n── COMBOS ({len(pool.combos)} available in color identity) ──")
@@ -341,7 +460,7 @@ def build_deck(
 
     if pool.flex:
         typer.echo(f"\n── FLEX ({len(pool.flex)} cards) ──")
-        for card in pool.flex[:50]:   # cap flex display at 50
+        for card in pool.flex[:50]:  # cap flex display at 50
             typer.echo(f"  {card.name:<35} score={card.score:>5}")
 
     typer.echo(f"\n  Total: {pool.total} cards  |  {len(pool.combos)} combos")
@@ -353,7 +472,9 @@ def build_deck(
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Host to bind to"),
     port: int = typer.Option(8000, "--port", help="Port to listen on"),
-    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev mode)"),
+    reload: bool = typer.Option(
+        False, "--reload", help="Auto-reload on code changes (dev mode)"
+    ),
 ) -> None:
     """Start the web UI server (FastAPI + Uvicorn)."""
     try:

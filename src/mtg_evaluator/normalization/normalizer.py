@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from mtg_evaluator.db.models import (
-    Card, CardLegality, CardFace, CardKeyword, RawScryfallCard, CardIngestionRun, IngestionStatus,
+    Card,
+    CardLegality,
+    CardFace,
+    CardKeyword,
+    RawScryfallCard,
+    CardIngestionRun,
+    IngestionStatus,
 )
 from mtg_evaluator.ingestion.scryfall import compute_oracle_text_checksum
 
@@ -46,7 +52,9 @@ def normalize_all(session: Session, run_id: str | None = None) -> int:
         type_line = card_json.get("type_line", "")
 
         first_seen = now if oracle_id not in existing_oracle_ids else None
-        card_data_by_oracle_id[oracle_id] = _build_card(card_json, oracle_id, checksum, type_line, now, first_seen)
+        card_data_by_oracle_id[oracle_id] = _build_card(
+            card_json, oracle_id, checksum, type_line, now, first_seen
+        )
 
     card_rows = list(card_data_by_oracle_id.values())
     for i in range(0, len(card_rows), BATCH_SIZE):
@@ -57,17 +65,38 @@ def normalize_all(session: Session, run_id: str | None = None) -> int:
             set_={
                 col: stmt.excluded[col]
                 for col in [
-                    "scryfall_id", "name", "mana_cost", "cmc", "type_line", "oracle_text",
-                    "colors", "color_identity", "power", "toughness", "loyalty",
-                    "is_legendary", "is_creature", "is_planeswalker", "is_land",
-                    "is_instant", "is_sorcery", "layout", "rarity", "set_code",
-                    "scryfall_uri", "image_uri", "oracle_text_checksum", "updated_at",
+                    "scryfall_id",
+                    "name",
+                    "mana_cost",
+                    "cmc",
+                    "type_line",
+                    "oracle_text",
+                    "colors",
+                    "color_identity",
+                    "power",
+                    "toughness",
+                    "loyalty",
+                    "is_legendary",
+                    "is_creature",
+                    "is_planeswalker",
+                    "is_land",
+                    "is_instant",
+                    "is_sorcery",
+                    "layout",
+                    "rarity",
+                    "set_code",
+                    "scryfall_uri",
+                    "image_uri",
+                    "oracle_text_checksum",
+                    "updated_at",
                 ]
             },
         )
         session.execute(stmt)
         if i % 5000 == 0:
-            print(f"  Cards upserted: {min(i + BATCH_SIZE, len(card_rows))}/{len(card_rows)}")
+            print(
+                f"  Cards upserted: {min(i + BATCH_SIZE, len(card_rows))}/{len(card_rows)}"
+            )
             session.flush()
 
     session.flush()
@@ -85,21 +114,25 @@ def normalize_all(session: Session, run_id: str | None = None) -> int:
             continue
 
         for fmt, status in card_json.get("legalities", {}).items():
-            legality_rows.append({"oracle_id": oracle_id, "format": fmt, "status": status})
+            legality_rows.append(
+                {"oracle_id": oracle_id, "format": fmt, "status": status}
+            )
 
         for idx, face in enumerate(card_json.get("card_faces", [])):
-            face_rows.append({
-                "oracle_id": oracle_id,
-                "face_index": idx,
-                "name": face.get("name", ""),
-                "mana_cost": face.get("mana_cost"),
-                "type_line": face.get("type_line"),
-                "oracle_text": face.get("oracle_text"),
-                "power": face.get("power"),
-                "toughness": face.get("toughness"),
-                "loyalty": face.get("loyalty"),
-                "colors": sorted(face.get("colors", [])),
-            })
+            face_rows.append(
+                {
+                    "oracle_id": oracle_id,
+                    "face_index": idx,
+                    "name": face.get("name", ""),
+                    "mana_cost": face.get("mana_cost"),
+                    "type_line": face.get("type_line"),
+                    "oracle_text": face.get("oracle_text"),
+                    "power": face.get("power"),
+                    "toughness": face.get("toughness"),
+                    "loyalty": face.get("loyalty"),
+                    "colors": sorted(face.get("colors", [])),
+                }
+            )
 
         for kw in card_json.get("keywords", []):
             keyword_rows.append({"oracle_id": oracle_id, "keyword": kw})
@@ -139,7 +172,9 @@ def normalize_all(session: Session, run_id: str | None = None) -> int:
         for i in range(0, len(keyword_rows), BATCH_SIZE):
             batch = keyword_rows[i : i + BATCH_SIZE]
             stmt = pg_insert(CardKeyword).values(batch)
-            stmt = stmt.on_conflict_do_nothing(constraint="uq_card_keywords_oracle_keyword")
+            stmt = stmt.on_conflict_do_nothing(
+                constraint="uq_card_keywords_oracle_keyword"
+            )
             session.execute(stmt)
         session.flush()
     print(f"Pass 2: {len(keyword_rows)} keywords upserted.")
@@ -148,9 +183,18 @@ def normalize_all(session: Session, run_id: str | None = None) -> int:
     return len(card_rows)
 
 
-def _build_card(card_json: dict, oracle_id: str, checksum: str, type_line: str, now: datetime, first_seen: datetime | None) -> dict:
+def _build_card(
+    card_json: dict,
+    oracle_id: str,
+    checksum: str,
+    type_line: str,
+    now: datetime,
+    first_seen: datetime | None,
+) -> dict:
     image_uris = card_json.get("image_uris", {})
-    image_uri = image_uris.get("normal") or image_uris.get("large") or image_uris.get("png")
+    image_uri = (
+        image_uris.get("normal") or image_uris.get("large") or image_uris.get("png")
+    )
 
     if not image_uri and card_json.get("card_faces"):
         face_uris = card_json["card_faces"][0].get("image_uris", {})

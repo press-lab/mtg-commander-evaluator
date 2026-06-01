@@ -20,17 +20,27 @@ with get_session() as s:
         GROUP BY 1 ORDER BY 2 DESC
     """)).all()
     for r in rows:
-        print(f'{r.ptype}: {r.cnt}')
+        print(f"{r.ptype}: {r.cnt}")
 
-    bg = s.execute(text("SELECT COUNT(*) FROM cards WHERE type_line ILIKE '%background%' AND is_legendary = true")).scalar()
-    print(f'Background enchantments (legendary): {bg}')
+    bg = s.execute(
+        text(
+            "SELECT COUNT(*) FROM cards WHERE type_line ILIKE '%background%' AND is_legendary = true"
+        )
+    ).scalar()
+    print(f"Background enchantments (legendary): {bg}")
 
-    t = s.execute(text("SELECT oracle_text FROM cards WHERE name = 'Tymna the Weaver'")).scalar()
-    print(f'Tymna text: {repr(t) if t else None}')
+    t = s.execute(
+        text("SELECT oracle_text FROM cards WHERE name = 'Tymna the Weaver'")
+    ).scalar()
+    print(f"Tymna text: {repr(t) if t else None}")
 
-    t2 = s.execute(text("SELECT oracle_text FROM cards WHERE name = 'Thrasios, Triton Hero'")).scalar()
-    print(f'Thrasios text: {repr(t2[:80]) if t2 else None}')
+    t2 = s.execute(
+        text("SELECT oracle_text FROM cards WHERE name = 'Thrasios, Triton Hero'")
+    ).scalar()
+    print(f"Thrasios text: {repr(t2[:80]) if t2 else None}")
 
     # Named partner example
-    t3 = s.execute(text("SELECT oracle_text FROM cards WHERE name = 'Regna, the Redeemer'")).scalar()
-    print(f'Regna text: {repr(t3[:120]) if t3 else None}')
+    t3 = s.execute(
+        text("SELECT oracle_text FROM cards WHERE name = 'Regna, the Redeemer'")
+    ).scalar()
+    print(f"Regna text: {repr(t3[:120]) if t3 else None}")

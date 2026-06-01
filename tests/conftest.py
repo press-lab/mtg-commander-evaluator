@@ -1,6 +1,5 @@
 import pytest
 
-
 SAMPLE_CARDS = [
     {
         "id": "a2daf943-dc88-4c8b-ac97-4476ea6abb9c",
@@ -13,11 +12,18 @@ SAMPLE_CARDS = [
         "colors": ["W"],
         "color_identity": ["W"],
         "keywords": [],
-        "legalities": {"commander": "legal", "vintage": "legal", "legacy": "legal", "standard": "not_legal"},
+        "legalities": {
+            "commander": "legal",
+            "vintage": "legal",
+            "legacy": "legal",
+            "standard": "not_legal",
+        },
         "rarity": "uncommon",
         "set": "c21",
         "scryfall_uri": "https://scryfall.com/card/c21/122/swords-to-plowshares",
-        "image_uris": {"normal": "https://cards.scryfall.io/normal/front/a/2/a2daf943.jpg"},
+        "image_uris": {
+            "normal": "https://cards.scryfall.io/normal/front/a/2/a2daf943.jpg"
+        },
         "layout": "normal",
     },
     {
@@ -31,11 +37,18 @@ SAMPLE_CARDS = [
         "colors": [],
         "color_identity": [],
         "keywords": [],
-        "legalities": {"commander": "legal", "vintage": "restricted", "legacy": "banned", "standard": "not_legal"},
+        "legalities": {
+            "commander": "legal",
+            "vintage": "restricted",
+            "legacy": "banned",
+            "standard": "not_legal",
+        },
         "rarity": "uncommon",
         "set": "c21",
         "scryfall_uri": "https://scryfall.com/card/c21/264/sol-ring",
-        "image_uris": {"normal": "https://cards.scryfall.io/normal/front/b/9/b9e60f82.jpg"},
+        "image_uris": {
+            "normal": "https://cards.scryfall.io/normal/front/b/9/b9e60f82.jpg"
+        },
         "layout": "normal",
     },
     {
@@ -49,11 +62,18 @@ SAMPLE_CARDS = [
         "colors": ["U", "W"],
         "color_identity": ["U", "W"],
         "keywords": [],
-        "legalities": {"commander": "legal", "vintage": "legal", "legacy": "legal", "standard": "not_legal"},
+        "legalities": {
+            "commander": "legal",
+            "vintage": "legal",
+            "legacy": "legal",
+            "standard": "not_legal",
+        },
         "rarity": "rare",
         "set": "war",
         "scryfall_uri": "https://scryfall.com/card/war/221/teferi-time-raveler",
-        "image_uris": {"normal": "https://cards.scryfall.io/normal/front/c/5/c5c61f6b.jpg"},
+        "image_uris": {
+            "normal": "https://cards.scryfall.io/normal/front/c/5/c5c61f6b.jpg"
+        },
         "layout": "normal",
         "loyalty": "4",
     },
@@ -68,7 +88,11 @@ SAMPLE_CARDS = [
         "colors": ["U"],
         "color_identity": ["U"],
         "keywords": [],
-        "legalities": {"commander": "legal", "vintage": "legal", "standard": "not_legal"},
+        "legalities": {
+            "commander": "legal",
+            "vintage": "legal",
+            "standard": "not_legal",
+        },
         "rarity": "uncommon",
         "set": "isd",
         "scryfall_uri": "https://scryfall.com/card/isd/51/delver-of-secrets-insectile-aberration",
@@ -82,7 +106,9 @@ SAMPLE_CARDS = [
                 "power": "1",
                 "toughness": "1",
                 "colors": ["U"],
-                "image_uris": {"normal": "https://cards.scryfall.io/normal/front/d/9/d9d71f6b.jpg"},
+                "image_uris": {
+                    "normal": "https://cards.scryfall.io/normal/front/d/9/d9d71f6b.jpg"
+                },
             },
             {
                 "name": "Insectile Aberration",
@@ -92,7 +118,9 @@ SAMPLE_CARDS = [
                 "power": "3",
                 "toughness": "2",
                 "colors": ["U"],
-                "image_uris": {"normal": "https://cards.scryfall.io/normal/back/d/9/d9d71f6b.jpg"},
+                "image_uris": {
+                    "normal": "https://cards.scryfall.io/normal/back/d/9/d9d71f6b.jpg"
+                },
             },
         ],
     },
@@ -107,11 +135,17 @@ SAMPLE_CARDS = [
         "colors": ["G"],
         "color_identity": ["G"],
         "keywords": [],
-        "legalities": {"commander": "legal", "vintage": "legal", "standard": "not_legal"},
+        "legalities": {
+            "commander": "legal",
+            "vintage": "legal",
+            "standard": "not_legal",
+        },
         "rarity": "common",
         "set": "c21",
         "scryfall_uri": "https://scryfall.com/card/c21/162/cultivate",
-        "image_uris": {"normal": "https://cards.scryfall.io/normal/front/e/1/e1e11f6b.jpg"},
+        "image_uris": {
+            "normal": "https://cards.scryfall.io/normal/front/e/1/e1e11f6b.jpg"
+        },
         "layout": "normal",
     },
 ]

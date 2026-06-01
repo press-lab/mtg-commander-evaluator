@@ -9,6 +9,7 @@ Endpoints:
   GET  /api/card/{oracle_id}  — card detail
   GET  /                      — serve the frontend SPA
 """
+
 from __future__ import annotations
 
 import os
@@ -32,8 +33,9 @@ _STATIC_DIR = Path(__file__).parent / "static"
 # Request / Response schemas
 # ---------------------------------------------------------------------------
 
+
 class EvaluateRequest(BaseModel):
-    decklist: str          # raw pasted deck text
+    decklist: str  # raw pasted deck text
     deck_name: str = "My Deck"
 
 
@@ -45,7 +47,7 @@ class BuildRequest(BaseModel):
     want_combos: bool = True
     tutor_density: str = "light"
     pool_size: int = 200
-    assemble: bool = False   # if True, run LLM assembler after building pool
+    assemble: bool = False  # if True, run LLM assembler after building pool
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +55,8 @@ class BuildRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 _BRACKET_INT = {
-    "casual": 1, "bracket_1": 1,
+    "casual": 1,
+    "bracket_1": 1,
     "bracket_2": 2,
     "bracket_3": 3,
     "bracket_4": 4,
@@ -70,14 +73,26 @@ _BRACKET_LABEL = {
 }
 
 _BRACKET_COLOR = {
-    1: "#4ade80", 2: "#86efac", 3: "#facc15", 4: "#f97316", 5: "#ef4444",
+    1: "#4ade80",
+    2: "#86efac",
+    3: "#facc15",
+    4: "#f97316",
+    5: "#ef4444",
 }
 
 _ROLE_ICON = {
-    "ramp": "⚡", "draw": "🃏", "removal": "🗡️", "creature_removal": "🗡️",
-    "board_wipe": "💥", "protection": "🛡️", "tutor": "🔍",
-    "sacrifice": "💀", "token": "🪙", "counter": "🔢",
+    "ramp": "⚡",
+    "draw": "🃏",
+    "removal": "🗡️",
+    "creature_removal": "🗡️",
+    "board_wipe": "💥",
+    "protection": "🛡️",
+    "tutor": "🔍",
+    "sacrifice": "💀",
+    "token": "🪙",
+    "counter": "🔢",
 }
+
 
 def _role_status(count: int, minimum: int) -> str:
     if count >= minimum:
@@ -90,6 +105,7 @@ def _role_status(count: int, minimum: int) -> str:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @app.post("/api/evaluate")
 async def evaluate(req: EvaluateRequest):
@@ -125,7 +141,7 @@ async def evaluate(req: EvaluateRequest):
     role_pct = roles_met / roles_total if roles_total else 0
     combo_pct = min(len(result.combos_found) / 3.0, 1.0)
     gc_pct = min(len(result.game_changers_found) / 5.0, 1.0)
-    power_pct = (combo_pct * 0.6 + gc_pct * 0.4)
+    power_pct = combo_pct * 0.6 + gc_pct * 0.4
     total_cards = len(parsed.all_cards) or 1
     clean_pct = 1.0 - min(
         (len(result.unclassified_cards) + len(result.unresolved_cards)) / total_cards,
@@ -163,7 +179,10 @@ async def evaluate(req: EvaluateRequest):
         ]
     if result.mass_land_denial_found:
         downgrade_suggestions += [
-            {"name": n, "reason": "Mass land denial — hard B4 floor, remove to drop to B3"}
+            {
+                "name": n,
+                "reason": "Mass land denial — hard B4 floor, remove to drop to B3",
+            }
             for n in result.mass_land_denial_found[:3]
         ]
 
@@ -183,7 +202,9 @@ async def evaluate(req: EvaluateRequest):
         "archetype": result.archetype_guess,
         "bracket_raw": result.bracket_estimate,
         "bracket_int": bracket_int,
-        "bracket_label": _BRACKET_LABEL.get(result.bracket_estimate or "", result.bracket_estimate),
+        "bracket_label": _BRACKET_LABEL.get(
+            result.bracket_estimate or "", result.bracket_estimate
+        ),
         "bracket_color": _BRACKET_COLOR.get(bracket_int, "#888"),
         "bracket_reasoning": result.bracket_reasoning,
         "deck_score": deck_score,
@@ -238,7 +259,11 @@ async def build_pool(req: BuildRequest):
     assembled = None
     if req.assemble:
         try:
-            from mtg_evaluator.deckbuilding.assembler import assemble_deck, validate_assembled_deck
+            from mtg_evaluator.deckbuilding.assembler import (
+                assemble_deck,
+                validate_assembled_deck,
+            )
+
             assembled_deck = assemble_deck(pool, bracket=req.bracket)
             warnings = validate_assembled_deck(assembled_deck)
             assembled = {
@@ -313,8 +338,8 @@ async def build_pool(req: BuildRequest):
         "commander": pool.commander_name,
         "assembled": assembled,
         "color_identity": pool.color_identity,
-        "archetype": pool.archetype,            # canonical (normalized) archetype
-        "archetype_input": req.archetype,       # what the user typed
+        "archetype": pool.archetype,  # canonical (normalized) archetype
+        "archetype_input": req.archetype,  # what the user typed
         "bracket": req.bracket,
         "total": pool.total,
         "core": [_serialize_card(c) for c in pool.core],
@@ -353,8 +378,11 @@ async def commanders(
     color_list = [c.strip() for c in colors.split(",")] if colors else None
     with get_session() as session:
         results = find_commanders(
-            session, archetype=archetype,
-            colors=color_list, max_colors=max_colors, limit=limit,
+            session,
+            archetype=archetype,
+            colors=color_list,
+            max_colors=max_colors,
+            limit=limit,
         )
         # Enrich with partner info — serialize inside session
         oracle_ids = [c.oracle_id for c in results]
@@ -368,16 +396,18 @@ async def commanders(
         for c in results:
             card = cards_by_id.get(c.oracle_id)
             partner_info = detect_partner_type(card) if card else None
-            enriched.append({
-                "name": c.name,
-                "oracle_id": c.oracle_id,
-                "color_identity": list(c.color_identity or []),
-                "archetype_score": c.archetype_score,
-                "edhrec_decks": c.edhrec_decks,
-                "type_line": c.type_line,
-                "partner_label": partner_info.label if partner_info else None,
-                "partner_type": partner_info.partner_type if partner_info else None,
-            })
+            enriched.append(
+                {
+                    "name": c.name,
+                    "oracle_id": c.oracle_id,
+                    "color_identity": list(c.color_identity or []),
+                    "archetype_score": c.archetype_score,
+                    "edhrec_decks": c.edhrec_decks,
+                    "type_line": c.type_line,
+                    "partner_label": partner_info.label if partner_info else None,
+                    "partner_type": partner_info.partner_type if partner_info else None,
+                }
+            )
 
     return enriched
 
@@ -395,8 +425,12 @@ async def browse(
     color_list = [c.strip() for c in colors.split(",")] if colors else None
     with get_session() as session:
         results = browse_cards(
-            session, archetype=archetype, bracket=bracket,
-            role=role, colors=color_list, limit=limit,
+            session,
+            archetype=archetype,
+            bracket=bracket,
+            role=role,
+            colors=color_list,
+            limit=limit,
         )
 
     return [
@@ -441,6 +475,7 @@ async def archetypes(commander_name: str = Query(...)):
 async def all_archetypes():
     """Return the full list of canonical archetypes (for dropdowns with no commander selected)."""
     from mtg_evaluator.deckbuilding.archetypes import CANONICAL_ARCHETYPES
+
     return {"archetypes": CANONICAL_ARCHETYPES}
 
 
@@ -459,8 +494,12 @@ async def search_commanders(q: str = Query(..., min_length=2), limit: int = 10):
         ).all()
 
     return [
-        {"name": r.name, "oracle_id": r.oracle_id,
-         "color_identity": r.color_identity, "type_line": r.type_line}
+        {
+            "name": r.name,
+            "oracle_id": r.oracle_id,
+            "color_identity": r.color_identity,
+            "type_line": r.type_line,
+        }
         for r in rows
     ]
 
@@ -475,7 +514,10 @@ async def partners(oracle_id: str):
     Returns partner_info: null if the commander has no partner mechanic.
     """
     from mtg_evaluator.db.models import Card
-    from mtg_evaluator.deckbuilding.partners import detect_partner_type, find_valid_partners
+    from mtg_evaluator.deckbuilding.partners import (
+        detect_partner_type,
+        find_valid_partners,
+    )
 
     with get_session() as session:
         commander = session.get(Card, oracle_id)
@@ -530,12 +572,16 @@ async def commander_info(oracle_id: str):
             "oracle_id": commander.oracle_id,
             "color_identity": list(commander.color_identity or []),
             "type_line": commander.type_line,
-            "partner_info": {
-                "type": info.partner_type,
-                "label": info.label,
-                "named_partner": info.named_partner,
-                "search_hint": info.search_hint,
-            } if info else None,
+            "partner_info": (
+                {
+                    "type": info.partner_type,
+                    "label": info.label,
+                    "named_partner": info.named_partner,
+                    "search_hint": info.search_hint,
+                }
+                if info
+                else None
+            ),
             "archetypes": [{"archetype": a, "score": s} for a, s in archetypes],
         }
 
@@ -545,6 +591,7 @@ async def commander_info(oracle_id: str):
 # ---------------------------------------------------------------------------
 # Serve frontend
 # ---------------------------------------------------------------------------
+
 
 @app.get("/")
 async def index():

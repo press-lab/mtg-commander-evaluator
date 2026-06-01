@@ -28,7 +28,9 @@ def fetch_bulk_metadata() -> dict:
         if entry["type"] == BULK_TYPE:
             return entry
 
-    raise ValueError(f"Bulk type '{BULK_TYPE}' not found in Scryfall bulk-data response")
+    raise ValueError(
+        f"Bulk type '{BULK_TYPE}' not found in Scryfall bulk-data response"
+    )
 
 
 def download_bulk_file(download_url: str) -> Path:
@@ -40,7 +42,9 @@ def download_bulk_file(download_url: str) -> Path:
 
     print(f"Downloading {download_url} -> {dest}")
 
-    with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=300, follow_redirects=True) as client:
+    with httpx.Client(
+        headers={"User-Agent": USER_AGENT}, timeout=300, follow_redirects=True
+    ) as client:
         with client.stream("GET", download_url) as resp:
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
@@ -51,7 +55,11 @@ def download_bulk_file(download_url: str) -> Path:
                     downloaded += len(chunk)
                     if total:
                         pct = downloaded / total * 100
-                        print(f"\r  {pct:.1f}%  ({downloaded // 1024 // 1024} MB)", end="", flush=True)
+                        print(
+                            f"\r  {pct:.1f}%  ({downloaded // 1024 // 1024} MB)",
+                            end="",
+                            flush=True,
+                        )
     print()
     return dest
 

@@ -2,6 +2,7 @@
 Import decks from a Moxfield JSON export (downloaded via browser console)
 and run evaluate-deck on each one.
 """
+
 import io
 import json
 import sys
@@ -27,17 +28,23 @@ def moxfield_to_text(deck: dict) -> str:
 
 
 def print_result(deck_name: str, result: EvaluationResult) -> None:
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {deck_name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     if result.commander_name:
         print(f"  Commander  : {result.commander_name}")
     print(f"  Archetype  : {result.archetype_guess or 'unknown'}")
     gc = result.game_changers_found
-    print(f"  Bracket    : {result.bracket_estimate or 'unknown'}  ({len(gc)} game changers: {', '.join(gc) if gc else 'none'})")
+    print(
+        f"  Bracket    : {result.bracket_estimate or 'unknown'}  ({len(gc)} game changers: {', '.join(gc) if gc else 'none'})"
+    )
     if result.bracket_reasoning:
         print(f"  Reasoning  : {result.bracket_reasoning}")
-    print(f"  Synergy    : {result.synergy_score}/5" if result.synergy_score else "  Synergy    : n/a")
+    print(
+        f"  Synergy    : {result.synergy_score}/5"
+        if result.synergy_score
+        else "  Synergy    : n/a"
+    )
 
     print(f"\n  Role Coverage:")
     for rc in result.role_coverage:
@@ -56,7 +63,9 @@ def print_result(deck_name: str, result: EvaluationResult) -> None:
             print(f"    + {s['name']} (score {s['archetype_score']}/5)")
 
     if result.unresolved_cards:
-        print(f"\n  Unresolved ({len(result.unresolved_cards)}): {', '.join(result.unresolved_cards[:5])}")
+        print(
+            f"\n  Unresolved ({len(result.unresolved_cards)}): {', '.join(result.unresolved_cards[:5])}"
+        )
     if result.unclassified_cards:
         print(f"  Unclassified: {len(result.unclassified_cards)} cards")
 
@@ -64,7 +73,11 @@ def print_result(deck_name: str, result: EvaluationResult) -> None:
 
 
 def main():
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(r"C:\Users\sethp\Downloads\moxfield_decks.json")
+    path = (
+        Path(sys.argv[1])
+        if len(sys.argv) > 1
+        else Path(r"C:\Users\sethp\Downloads\moxfield_decks.json")
+    )
     decks = json.loads(path.read_text(encoding="utf-8"))
     print(f"Loaded {len(decks)} decks from {path.name}")
 

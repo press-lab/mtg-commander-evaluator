@@ -10,6 +10,7 @@ Examples:
   "I want to build Goblin tribal"
   "Show me commanders for a B3 tokens deck in black/white"
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,7 +19,10 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from mtg_evaluator.db.models import (
-    Card, CardClassification, CardArchetypeScore, EDHRecCardStats,
+    Card,
+    CardClassification,
+    CardArchetypeScore,
+    EDHRecCardStats,
 )
 from mtg_evaluator.evaluation.evaluator import GAME_CHANGERS
 
@@ -36,9 +40,9 @@ class CommanderOption:
 def find_commanders(
     session: Session,
     archetype: str,
-    colors: list[str] | None = None,      # filter to commanders within these colors
-    max_colors: int | None = None,         # e.g. 2 = only mono/two-color commanders
-    bracket: int | None = None,            # informational only — no hard filter
+    colors: list[str] | None = None,  # filter to commanders within these colors
+    max_colors: int | None = None,  # e.g. 2 = only mono/two-color commanders
+    bracket: int | None = None,  # informational only — no hard filter
     limit: int = 20,
 ) -> list[CommanderOption]:
     """
@@ -66,15 +70,22 @@ def find_commanders(
             EDHRecCardStats.num_decks,
         )
         .join(cls_subq, cls_subq.c.oracle_id == Card.oracle_id)
-        .join(CardArchetypeScore,
-              (CardArchetypeScore.classification_id == cls_subq.c.id) &
-              (CardArchetypeScore.archetype == archetype))
-        .join(EDHRecCardStats, EDHRecCardStats.oracle_id == Card.oracle_id, isouter=True)
+        .join(
+            CardArchetypeScore,
+            (CardArchetypeScore.classification_id == cls_subq.c.id)
+            & (CardArchetypeScore.archetype == archetype),
+        )
+        .join(
+            EDHRecCardStats, EDHRecCardStats.oracle_id == Card.oracle_id, isouter=True
+        )
         .where(Card.is_legendary == True)  # noqa: E712
-        .where(Card.is_creature == True)   # legendary creatures only (most commanders)
+        .where(Card.is_creature == True)  # legendary creatures only (most commanders)
         .where(CardArchetypeScore.score >= 3)
-        .order_by(CardArchetypeScore.score.desc(), EDHRecCardStats.num_decks.desc().nullslast())
-        .limit(limit * 4)   # over-fetch for color filtering
+        .order_by(
+            CardArchetypeScore.score.desc(),
+            EDHRecCardStats.num_decks.desc().nullslast(),
+        )
+        .limit(limit * 4)  # over-fetch for color filtering
     ).all()
 
     color_filter = set(colors) if colors else None
@@ -91,14 +102,16 @@ def find_commanders(
         if max_colors is not None and len(ci - {"C"}) > max_colors:
             continue
 
-        results.append(CommanderOption(
-            name=row.name,
-            oracle_id=row.oracle_id,
-            color_identity=sorted(row.color_identity or []),
-            archetype_score=row.arch_score,
-            edhrec_decks=row.num_decks,
-            type_line=row.type_line,
-        ))
+        results.append(
+            CommanderOption(
+                name=row.name,
+                oracle_id=row.oracle_id,
+                color_identity=sorted(row.color_identity or []),
+                archetype_score=row.arch_score,
+                edhrec_decks=row.num_decks,
+                type_line=row.type_line,
+            )
+        )
 
         if len(results) >= limit:
             break

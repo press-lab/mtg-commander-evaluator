@@ -18,6 +18,7 @@ Card tiers:
   SUPPORT — arch ≥ 3 OR fills a needed role
   FLEX    — everything else that passes color + bracket filter
 """
+
 from __future__ import annotations
 
 import math
@@ -28,23 +29,38 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from mtg_evaluator.db.models import (
-    Card, CardClassification, CardArchetypeScore, CardBracketScore,
-    CardFunction, EDHRecCardStats, SpellbookCombo, SpellbookComboCard,
+    Card,
+    CardClassification,
+    CardArchetypeScore,
+    CardBracketScore,
+    CardFunction,
+    EDHRecCardStats,
+    SpellbookCombo,
+    SpellbookComboCard,
 )
 from mtg_evaluator.evaluation.evaluator import GAME_CHANGERS
 from mtg_evaluator.deckbuilding.request import DeckRequest
 from mtg_evaluator.deckbuilding.archetypes import normalize_archetype
 from mtg_evaluator.deckbuilding.lands import land_score
 from mtg_evaluator.deckbuilding.commander_profile import (
-    CommanderProfileData, get_or_generate_profile,
+    CommanderProfileData,
+    get_or_generate_profile,
 )
 from mtg_evaluator.deckbuilding.role_quality import best_role_quality
 from mtg_evaluator.deckbuilding.role_targets import (
-    RoleTargets, compute_role_targets, saturation_multiplier,
+    RoleTargets,
+    compute_role_targets,
+    saturation_multiplier,
 )
-from mtg_evaluator.deckbuilding.consistency import compute_consistency, ConsistencyReport
+from mtg_evaluator.deckbuilding.consistency import (
+    compute_consistency,
+    ConsistencyReport,
+)
 from mtg_evaluator.deckbuilding.packages import (
-    check_package_health, detect_nonbos, PackageHealth, NonboWarning,
+    check_package_health,
+    detect_nonbos,
+    PackageHealth,
+    NonboWarning,
 )
 
 Tier = Literal["CORE", "COMBO", "SUPPORT", "FLEX"]
@@ -54,7 +70,15 @@ _BRACKET_KEY = {1: "casual", 2: "bracket_2", 3: "bracket_3", 4: "bracket_4", 5: 
 # Roles counted for interaction (removal + board wipes + counters)
 _INTERACTION_ROLES = {"removal", "creature_removal", "board_wipe", "counter"}
 # Roles that count toward "needed role" scoring
-_NEEDED_ROLES = {"ramp", "draw", "removal", "creature_removal", "board_wipe", "protection", "tutor"}
+_NEEDED_ROLES = {
+    "ramp",
+    "draw",
+    "removal",
+    "creature_removal",
+    "board_wipe",
+    "protection",
+    "tutor",
+}
 
 
 @dataclass
@@ -62,10 +86,10 @@ class PoolCard:
     name: str
     oracle_id: str
     tier: Tier
-    score: float               # 0-100 composite
+    score: float  # 0-100 composite
     archetype_score: Optional[float]
     bracket_score: Optional[float]
-    role_quality: float        # 0-5 quality score for best role (replaces binary)
+    role_quality: float  # 0-5 quality score for best role (replaces binary)
     functions: list[str]
     is_game_changer: bool
     combo_ids: list[str]
@@ -119,7 +143,7 @@ def _log_popularity(num_decks: Optional[int]) -> float:
 def _composite_score(
     archetype_score: Optional[float],
     bracket_score: Optional[float],
-    role_quality: float,         # 0-5 (was binary fills_role)
+    role_quality: float,  # 0-5 (was binary fills_role)
     in_combo: bool,
     popularity: float,
     commander_fit: float = 0.0,  # 0-1 bonus from commander profile
@@ -135,11 +159,11 @@ def _composite_score(
       combo_signal × 7     — part of a legal combo
       popularity × 3       — global EDHREC popularity (low-weight floor)
     """
-    a = (archetype_score or 0) / 5.0          # 0-1
-    b = (bracket_score or 0) / 5.0            # 0-1
-    rq = role_quality / 5.0                   # 0-1 (quality-weighted role value)
+    a = (archetype_score or 0) / 5.0  # 0-1
+    b = (bracket_score or 0) / 5.0  # 0-1
+    rq = role_quality / 5.0  # 0-1 (quality-weighted role value)
     c = 1.0 if in_combo else 0.0
-    p = popularity                             # 0-1
+    p = popularity  # 0-1
     cf = min(commander_fit, 1.0)
     pk = min(package_bonus, 1.0)
 
@@ -164,22 +188,32 @@ def _commander_fit_bonus(
     fn_set = set(functions)
 
     # Commander needs creatures → creatures score higher
-    if profile.needs_creatures and any(f in fn_set for f in ("creature", "token_maker", "tokens")):
+    if profile.needs_creatures and any(
+        f in fn_set for f in ("creature", "token_maker", "tokens")
+    ):
         score += 0.4
     # Commander needs artifacts
     if profile.needs_artifacts and "artifact" in fn_set:
         score += 0.4
     # Commander needs spells
-    if profile.needs_spells and any(f in fn_set for f in ("instant", "sorcery", "cantrip", "spells")):
+    if profile.needs_spells and any(
+        f in fn_set for f in ("instant", "sorcery", "cantrip", "spells")
+    ):
         score += 0.4
     # Commander needs combat support
-    if profile.needs_combat and any(f in fn_set for f in ("evasion", "haste", "pump", "combat_trick")):
+    if profile.needs_combat and any(
+        f in fn_set for f in ("evasion", "haste", "pump", "combat_trick")
+    ):
         score += 0.4
     # Commander needs attack/damage triggers — evasion + haste are very valuable
-    if profile.needs_attack_damage_triggers and any(f in fn_set for f in ("evasion", "haste", "unblockable")):
+    if profile.needs_attack_damage_triggers and any(
+        f in fn_set for f in ("evasion", "haste", "unblockable")
+    ):
         score += 0.5
     # High dependency score → protection is extra valuable
-    if profile.dependency_score >= 3 and any(f in fn_set for f in ("protection", "hexproof", "indestructible")):
+    if profile.dependency_score >= 3 and any(
+        f in fn_set for f in ("protection", "hexproof", "indestructible")
+    ):
         score += 0.3
 
     return min(score, 1.0)
@@ -197,6 +231,7 @@ def _package_bonus(
         return 0.0
 
     from mtg_evaluator.deckbuilding.packages import ARCHETYPE_PACKAGES
+
     pkg = ARCHETYPE_PACKAGES.get(archetype)
     if not pkg:
         return 0.0
@@ -233,6 +268,7 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
 
     if partner_card:
         from mtg_evaluator.deckbuilding.partners import combined_color_identity
+
         color_identity = combined_color_identity(commander, partner_card)
     else:
         color_identity = list(commander.color_identity or [])
@@ -262,9 +298,11 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
 
     if request.want_combos and request.allowed_combo_tags:
         combo_rows = session.execute(
-            select(SpellbookCombo.spellbook_id, SpellbookCombo.bracket_tag,
-                   SpellbookCombo.results_description)
-            .where(SpellbookCombo.bracket_tag.in_(request.allowed_combo_tags))
+            select(
+                SpellbookCombo.spellbook_id,
+                SpellbookCombo.bracket_tag,
+                SpellbookCombo.results_description,
+            ).where(SpellbookCombo.bracket_tag.in_(request.allowed_combo_tags))
         ).all()
 
         for combo_id, btag, desc in combo_rows:
@@ -281,28 +319,32 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             card_names_map = {r.oracle_id: r.card_name for r in card_rows}
 
             combo_cards = session.execute(
-                select(Card.oracle_id, Card.color_identity)
-                .where(Card.oracle_id.in_(oracle_ids))
+                select(Card.oracle_id, Card.color_identity).where(
+                    Card.oracle_id.in_(oracle_ids)
+                )
             ).all()
 
             deck_colors = set(color_identity) | {"C"}
             fits = all(
-                set(c.color_identity or []).issubset(deck_colors)
-                for c in combo_cards
+                set(c.color_identity or []).issubset(deck_colors) for c in combo_cards
             )
             if not fits:
                 continue
 
             legal_combo_ids.add(combo_id)
             combo_oracle_sets[combo_id] = set(oracle_ids)
-            pool.combos.append(ComboSummary(
-                spellbook_id=combo_id,
-                bracket_tag=btag or "",
-                card_names=[card_names_map[oid] for oid in oracle_ids],
-                results_description=desc,
-            ))
+            pool.combos.append(
+                ComboSummary(
+                    spellbook_id=combo_id,
+                    bracket_tag=btag or "",
+                    card_names=[card_names_map[oid] for oid in oracle_ids],
+                    results_description=desc,
+                )
+            )
 
-    combo_oracle_union: set[str] = set().union(*combo_oracle_sets.values()) if combo_oracle_sets else set()
+    combo_oracle_union: set[str] = (
+        set().union(*combo_oracle_sets.values()) if combo_oracle_sets else set()
+    )
 
     # --- Load all classified cards in color identity ---
     cls_subq = (
@@ -328,20 +370,23 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             EDHRecCardStats.num_decks,
         )
         .join(cls_subq, cls_subq.c.oracle_id == Card.oracle_id)
-        .join(CardArchetypeScore,
-              (CardArchetypeScore.classification_id == cls_subq.c.id) &
-              (CardArchetypeScore.archetype == (canonical_archetype or "")),
-              isouter=True)
-        .join(CardBracketScore,
-              (CardBracketScore.classification_id == cls_subq.c.id) &
-              (CardBracketScore.bracket_level == bracket_key),
-              isouter=True)
-        .join(EDHRecCardStats, EDHRecCardStats.oracle_id == Card.oracle_id, isouter=True)
-        .where(Card.oracle_id != commander.oracle_id)
-        .where(
-            Card.oracle_id != partner_card.oracle_id
-            if partner_card else True
+        .join(
+            CardArchetypeScore,
+            (CardArchetypeScore.classification_id == cls_subq.c.id)
+            & (CardArchetypeScore.archetype == (canonical_archetype or "")),
+            isouter=True,
         )
+        .join(
+            CardBracketScore,
+            (CardBracketScore.classification_id == cls_subq.c.id)
+            & (CardBracketScore.bracket_level == bracket_key),
+            isouter=True,
+        )
+        .join(
+            EDHRecCardStats, EDHRecCardStats.oracle_id == Card.oracle_id, isouter=True
+        )
+        .where(Card.oracle_id != commander.oracle_id)
+        .where(Card.oracle_id != partner_card.oracle_id if partner_card else True)
     ).all()
 
     # Build function map
@@ -352,8 +397,9 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     fn_map: dict[str, list[str]] = {}
     if cls_ids_by_oracle:
         fn_rows = session.execute(
-            select(CardFunction.classification_id, CardFunction.function_name)
-            .where(CardFunction.classification_id.in_(cls_ids_by_oracle.values()))
+            select(CardFunction.classification_id, CardFunction.function_name).where(
+                CardFunction.classification_id.in_(cls_ids_by_oracle.values())
+            )
         ).all()
         cls_to_oracle = {v: k for k, v in cls_ids_by_oracle.items()}
         for fn_row in fn_rows:
@@ -363,7 +409,9 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
 
     deck_colors_set = set(color_identity) | {"C"}
     tutor_multiplier = {
-        "none": 0.5, "light": 1.0, "heavy": 1.3,
+        "none": 0.5,
+        "light": 1.0,
+        "heavy": 1.3,
     }.get(request.tutor_density, 1.0)
 
     # Track role counts so far for saturation (CORE tier cards counted first)
@@ -394,26 +442,46 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         if is_land:
             # Land quality tier scoring overrides composite
             ls = land_score(row.name, request.bracket)
-            score = ls if ls is not None else _composite_score(
-                row.arch_score, row.brack_score, 0.0, in_combo, popularity,
+            score = (
+                ls
+                if ls is not None
+                else _composite_score(
+                    row.arch_score,
+                    row.brack_score,
+                    0.0,
+                    in_combo,
+                    popularity,
+                )
             )
             rq = 0.0  # lands don't have a role quality
         else:
             # Role quality (replaces binary fills_role)
             fills_needed_role = bool(_NEEDED_ROLES.intersection(functions))
-            rq = best_role_quality(
-                functions, cmc,
-                bool(row.is_instant), bool(row.is_sorcery),
-                is_gc, oracle_text,
-            ) if fills_needed_role else 0.0
+            rq = (
+                best_role_quality(
+                    functions,
+                    cmc,
+                    bool(row.is_instant),
+                    bool(row.is_sorcery),
+                    is_gc,
+                    oracle_text,
+                )
+                if fills_needed_role
+                else 0.0
+            )
 
             # Commander fit and package bonuses
             cf = _commander_fit_bonus(functions, profile)
             pk = _package_bonus(functions, canonical_archetype)
 
             score = _composite_score(
-                row.arch_score, row.brack_score, rq, in_combo, popularity,
-                commander_fit=cf, package_bonus=pk,
+                row.arch_score,
+                row.brack_score,
+                rq,
+                in_combo,
+                popularity,
+                commander_fit=cf,
+                package_bonus=pk,
             )
 
             # Tutor density modifier
@@ -422,7 +490,8 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
                 score = round(score * tutor_multiplier, 2)
 
         combo_ids_for_card = [
-            cid for cid, oracles in combo_oracle_sets.items()
+            cid
+            for cid, oracles in combo_oracle_sets.items()
             if row.oracle_id in oracles
         ]
 
@@ -466,7 +535,9 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
 
     # Compute avg CMC for role target calculation (non-land cards in CORE)
     nonland_core = [c for c in pool.core if "land" not in c.type_line.lower()]
-    avg_cmc = (sum(c.cmc for c in nonland_core) / len(nonland_core)) if nonland_core else 3.5
+    avg_cmc = (
+        (sum(c.cmc for c in nonland_core) / len(nonland_core)) if nonland_core else 3.5
+    )
 
     # Dynamic role targets (Phase 5)
     role_targets = compute_role_targets(
@@ -546,21 +617,23 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     # --- Consistency math ---
     land_count_in_pool = sum(1 for c in pool.all_cards if "land" in c.type_line.lower())
     interaction_count = sum(
-        1 for c in pool.all_cards
-        if any(f in _INTERACTION_ROLES for f in c.functions)
+        1 for c in pool.all_cards if any(f in _INTERACTION_ROLES for f in c.functions)
     )
     enabler_count = 0
     payoff_count = 0
     if canonical_archetype:
         from mtg_evaluator.deckbuilding.packages import ARCHETYPE_PACKAGES
+
         pkg = ARCHETYPE_PACKAGES.get(canonical_archetype)
         if pkg:
             enabler_count = sum(
-                1 for c in pool.all_cards
+                1
+                for c in pool.all_cards
                 if any(f in pkg.enabler_functions for f in c.functions)
             )
             payoff_count = sum(
-                1 for c in pool.all_cards
+                1
+                for c in pool.all_cards
                 if any(f in pkg.payoff_functions for f in c.functions)
             )
 

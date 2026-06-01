@@ -5,14 +5,15 @@ from mtg_evaluator.normalization.normalizer import _build_card
 from mtg_evaluator.ingestion.scryfall import compute_oracle_text_checksum
 from datetime import datetime
 
-
 NOW = datetime(2024, 6, 1, 12, 0, 0)
 
 
 def build(card_json):
     oracle_id = card_json["oracle_id"]
     checksum = compute_oracle_text_checksum(card_json)
-    return _build_card(card_json, oracle_id, checksum, card_json["type_line"], NOW, None)
+    return _build_card(
+        card_json, oracle_id, checksum, card_json["type_line"], NOW, None
+    )
 
 
 class TestTypeParsing:
@@ -94,5 +95,7 @@ class TestChecksumField:
         oracle_id = card["oracle_id"]
         checksum = compute_oracle_text_checksum(card)
         first_seen = datetime(2023, 1, 1)
-        result = _build_card(card, oracle_id, checksum, card["type_line"], NOW, first_seen)
+        result = _build_card(
+            card, oracle_id, checksum, card["type_line"], NOW, first_seen
+        )
         assert result["first_seen_at"] == datetime(2023, 1, 1)

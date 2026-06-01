@@ -26,6 +26,7 @@ rules for what can pair with what:
 Detection is done entirely from oracle_text / type_line patterns — no extra DB
 column needed. Scryfall's oracle text is consistent enough to regex reliably.
 """
+
 from __future__ import annotations
 
 import re
@@ -47,19 +48,21 @@ PartnerType = Literal[
 ]
 
 # Regex patterns against oracle_text
-_PARTNER_WITH_RE    = re.compile(r"Partner with ([^(\n]+?)(?:\s*\(|\n|$)", re.IGNORECASE)
-_GENERIC_PARTNER_RE = re.compile(r"\nPartner \(You can have two commanders", re.IGNORECASE)
-_CHOOSE_BG_RE       = re.compile(r"Choose a Background", re.IGNORECASE)
-_DOCTORS_RE         = re.compile(r"Doctor'?s companion", re.IGNORECASE)
-_FRIENDS_RE         = re.compile(r"Friends forever", re.IGNORECASE)
+_PARTNER_WITH_RE = re.compile(r"Partner with ([^(\n]+?)(?:\s*\(|\n|$)", re.IGNORECASE)
+_GENERIC_PARTNER_RE = re.compile(
+    r"\nPartner \(You can have two commanders", re.IGNORECASE
+)
+_CHOOSE_BG_RE = re.compile(r"Choose a Background", re.IGNORECASE)
+_DOCTORS_RE = re.compile(r"Doctor'?s companion", re.IGNORECASE)
+_FRIENDS_RE = re.compile(r"Friends forever", re.IGNORECASE)
 
 
 @dataclass
 class PartnerInfo:
     partner_type: PartnerType
-    named_partner: str | None = None          # only set for named_partner
-    label: str = ""                           # human-readable description
-    search_hint: str = ""                     # UI hint for what to search
+    named_partner: str | None = None  # only set for named_partner
+    label: str = ""  # human-readable description
+    search_hint: str = ""  # UI hint for what to search
 
 
 def detect_partner_type(card: Card) -> PartnerInfo | None:
@@ -149,8 +152,12 @@ def find_valid_partners(session: Session, commander: Card) -> list[Card]:
         rows = session.scalars(
             select(Card)
             .where(Card.oracle_id != commander.oracle_id)
-            .where(Card.is_legendary == True)   # noqa: E712
-            .where(Card.oracle_text.op("~*")(r"(?n)\nPartner \(You can have two commanders"))
+            .where(Card.is_legendary == True)  # noqa: E712
+            .where(
+                Card.oracle_text.op("~*")(
+                    r"(?n)\nPartner \(You can have two commanders"
+                )
+            )
             .order_by(Card.name)
         ).all()
         return list(rows)
@@ -159,7 +166,7 @@ def find_valid_partners(session: Session, commander: Card) -> list[Card]:
         # All legendary Background enchantments
         rows = session.scalars(
             select(Card)
-            .where(Card.is_legendary == True)   # noqa: E712
+            .where(Card.is_legendary == True)  # noqa: E712
             .where(Card.type_line.ilike("%background%"))
             .order_by(Card.name)
         ).all()
@@ -169,8 +176,8 @@ def find_valid_partners(session: Session, commander: Card) -> list[Card]:
         # All legendary creatures with "Choose a Background"
         rows = session.scalars(
             select(Card)
-            .where(Card.is_legendary == True)   # noqa: E712
-            .where(Card.is_creature == True)    # noqa: E712
+            .where(Card.is_legendary == True)  # noqa: E712
+            .where(Card.is_creature == True)  # noqa: E712
             .where(Card.oracle_text.ilike("%Choose a Background%"))
             .order_by(Card.name)
         ).all()
@@ -180,8 +187,8 @@ def find_valid_partners(session: Session, commander: Card) -> list[Card]:
         # All "The Doctor" legendary creatures
         rows = session.scalars(
             select(Card)
-            .where(Card.is_legendary == True)   # noqa: E712
-            .where(Card.is_creature == True)    # noqa: E712
+            .where(Card.is_legendary == True)  # noqa: E712
+            .where(Card.is_creature == True)  # noqa: E712
             .where(Card.name.ilike("The % Doctor%"))
             .order_by(Card.name)
         ).all()
@@ -192,7 +199,7 @@ def find_valid_partners(session: Session, commander: Card) -> list[Card]:
         rows = session.scalars(
             select(Card)
             .where(Card.oracle_id != commander.oracle_id)
-            .where(Card.is_legendary == True)   # noqa: E712
+            .where(Card.is_legendary == True)  # noqa: E712
             .where(Card.oracle_text.ilike("%Friends forever%"))
             .order_by(Card.name)
         ).all()
@@ -205,7 +212,7 @@ def combined_color_identity(commander: Card, partner: Card) -> list[str]:
     """Union of two commanders' color identities, sorted WUBRG order."""
     _ORDER = {"W": 0, "U": 1, "B": 2, "R": 3, "G": 4, "C": 5}
     colors = set(commander.color_identity or []) | set(partner.color_identity or [])
-    colors.discard("C")     # colorless only applies when no other colors
+    colors.discard("C")  # colorless only applies when no other colors
     if not colors:
         colors = {"C"}
     return sorted(colors, key=lambda c: _ORDER.get(c, 9))

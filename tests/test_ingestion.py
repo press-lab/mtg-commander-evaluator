@@ -16,12 +16,16 @@ class TestOracleTextChecksum:
     def test_different_oracle_text_produces_different_checksum(self):
         card_a = {"oracle_text": "Exile target creature."}
         card_b = {"oracle_text": "Destroy target creature."}
-        assert compute_oracle_text_checksum(card_a) != compute_oracle_text_checksum(card_b)
+        assert compute_oracle_text_checksum(card_a) != compute_oracle_text_checksum(
+            card_b
+        )
 
     def test_same_oracle_text_produces_same_checksum(self):
         card_a = {"oracle_text": "Draw a card."}
         card_b = {"oracle_text": "Draw a card."}
-        assert compute_oracle_text_checksum(card_a) == compute_oracle_text_checksum(card_b)
+        assert compute_oracle_text_checksum(card_a) == compute_oracle_text_checksum(
+            card_b
+        )
 
     def test_missing_oracle_text_does_not_crash(self):
         card = {}
@@ -37,7 +41,9 @@ class TestOracleTextChecksum:
             ],
         }
         card_single = {"oracle_text": "Face A text.Face B text."}
-        assert compute_oracle_text_checksum(card_multi) == compute_oracle_text_checksum(card_single)
+        assert compute_oracle_text_checksum(card_multi) == compute_oracle_text_checksum(
+            card_single
+        )
 
     def test_checksum_is_hex_sha256(self):
         card = {"oracle_text": "test"}
@@ -50,7 +56,10 @@ class TestFetchBulkMetadata:
         mock_response_data = {
             "data": [
                 {"type": "all_cards", "download_uri": "https://example.com/all.json"},
-                {"type": "oracle_cards", "download_uri": "https://example.com/oracle.json"},
+                {
+                    "type": "oracle_cards",
+                    "download_uri": "https://example.com/oracle.json",
+                },
             ]
         }
 
@@ -67,13 +76,18 @@ class TestFetchBulkMetadata:
 
             with patch("mtg_evaluator.ingestion.scryfall._rate_limit"):
                 from mtg_evaluator.ingestion.scryfall import fetch_bulk_metadata
+
                 result = fetch_bulk_metadata()
 
         assert result["type"] == "oracle_cards"
         assert result["download_uri"] == "https://example.com/oracle.json"
 
     def test_raises_if_oracle_cards_not_found(self):
-        mock_response_data = {"data": [{"type": "all_cards", "download_uri": "https://example.com/all.json"}]}
+        mock_response_data = {
+            "data": [
+                {"type": "all_cards", "download_uri": "https://example.com/all.json"}
+            ]
+        }
 
         mock_resp = MagicMock()
         mock_resp.json.return_value = mock_response_data
@@ -88,5 +102,6 @@ class TestFetchBulkMetadata:
 
             with patch("mtg_evaluator.ingestion.scryfall._rate_limit"):
                 from mtg_evaluator.ingestion.scryfall import fetch_bulk_metadata
+
                 with pytest.raises(ValueError, match="oracle_cards"):
                     fetch_bulk_metadata()
