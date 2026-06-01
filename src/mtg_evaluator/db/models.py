@@ -441,6 +441,59 @@ class SpellbookCombo(Base):
     cards: Mapped[list["SpellbookComboCard"]] = relationship(back_populates="combo")
 
 
+class CommanderProfile(Base):
+    """
+    LLM-derived structured profile for a commander card.
+    Cached in DB; regenerated when prompt_version changes or needs_review is set.
+    """
+    __tablename__ = "commander_profiles"
+
+    oracle_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("cards.oracle_id"), primary_key=True,
+    )
+    card_name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # What the commander provides (reduces deck need for these roles)
+    provides_draw:            Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_ramp:            Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_tokens:          Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_sac_outlet:      Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_recursion:       Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_graveyard_access: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_exile_access:    Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_cost_reduction:  Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_removal:         Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_protection:      Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_wincon:          Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provides_combo_piece:     Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # What the commander needs from the deck (increases requirements)
+    needs_creatures:              Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    needs_artifacts:              Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    needs_spells:                 Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    needs_lands:                  Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    needs_combat:                 Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    needs_attack_damage_triggers: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Risk / dependency scores (0–5)
+    dependency_score:  Mapped[float] = mapped_column(Numeric(3, 1), nullable=False, default=0)
+    protection_need:   Mapped[float] = mapped_column(Numeric(3, 1), nullable=False, default=0)
+    recast_importance: Mapped[float] = mapped_column(Numeric(3, 1), nullable=False, default=0)
+
+    preferred_archetypes: Mapped[list] = mapped_column(
+        ARRAY(Text), nullable=False, server_default="{}"
+    )
+
+    # Cache / review metadata
+    confidence:      Mapped[float] = mapped_column(Numeric(3, 2), nullable=False, default=0.8)
+    prompt_version:  Mapped[str]   = mapped_column(Text, nullable=False, default="v1")
+    needs_review:    Mapped[bool]  = mapped_column(Boolean, nullable=False, default=False)
+    manual_override: Mapped[bool]  = mapped_column(Boolean, nullable=False, default=False)
+    generated_at:    Mapped[datetime] = mapped_column(DateTime, nullable=False,
+                                                       server_default=text("NOW()"))
+    raw_response:    Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+
 class SpellbookComboCard(Base):
     __tablename__ = "spellbook_combo_cards"
 

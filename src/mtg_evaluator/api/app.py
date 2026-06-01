@@ -273,6 +273,42 @@ async def build_pool(req: BuildRequest):
             "edhrec_decks": c.edhrec_decks,
         }
 
+    # --- Phase 5: serialize intelligence layers ---
+    role_targets_out = pool.role_targets.to_dict() if pool.role_targets else None
+    if pool.role_targets:
+        role_targets_out["modifiers_applied"] = pool.role_targets.modifiers_applied
+
+    consistency_out = pool.consistency.to_dict() if pool.consistency else None
+
+    package_health_out = pool.package_health.to_dict() if pool.package_health else None
+
+    nonbo_out = [w.to_dict() for w in pool.nonbo_warnings]
+
+    profile_out = None
+    if pool.commander_profile:
+        p = pool.commander_profile
+        profile_out = {
+            "card_name": p.card_name,
+            "provides_draw": p.provides_draw,
+            "provides_ramp": p.provides_ramp,
+            "provides_removal": p.provides_removal,
+            "provides_protection": p.provides_protection,
+            "provides_wincon": p.provides_wincon,
+            "provides_tokens": p.provides_tokens,
+            "provides_sac_outlet": p.provides_sac_outlet,
+            "provides_recursion": p.provides_recursion,
+            "provides_combo_piece": p.provides_combo_piece,
+            "needs_creatures": p.needs_creatures,
+            "needs_artifacts": p.needs_artifacts,
+            "needs_spells": p.needs_spells,
+            "needs_combat": p.needs_combat,
+            "dependency_score": p.dependency_score,
+            "protection_need": p.protection_need,
+            "recast_importance": p.recast_importance,
+            "preferred_archetypes": p.preferred_archetypes,
+            "confidence": p.confidence,
+        }
+
     return {
         "commander": pool.commander_name,
         "assembled": assembled,
@@ -293,6 +329,12 @@ async def build_pool(req: BuildRequest):
             }
             for c in pool.combos
         ],
+        # Phase 5
+        "commander_profile": profile_out,
+        "role_targets": role_targets_out,
+        "consistency": consistency_out,
+        "package_health": package_health_out,
+        "nonbo_warnings": nonbo_out,
     }
 
 

@@ -785,6 +785,153 @@
                 x-text="'AI assembly failed: ' + (buildResult.assembled && buildResult.assembled.error)">
               </div>
 
+              <!-- ── PHASE 5: DECK INTELLIGENCE ── -->
+              <template x-if="buildResult.consistency || buildResult.package_health || (buildResult.nonbo_warnings && buildResult.nonbo_warnings.length > 0)">
+                <div class="mb-5 space-y-3">
+
+                  <!-- Consistency Report -->
+                  <template x-if="buildResult.consistency">
+                    <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                      <div class="flex items-center justify-between mb-3">
+                        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide">📊 Consistency</div>
+                        <div class="flex items-center gap-2">
+                          <div class="text-xs font-bold px-2 py-0.5 rounded"
+                            :class="{
+                              'bg-green-900 text-green-300': buildResult.consistency.grade === 'A',
+                              'bg-blue-900 text-blue-300': buildResult.consistency.grade === 'B',
+                              'bg-yellow-900 text-yellow-300': buildResult.consistency.grade === 'C',
+                              'bg-orange-900 text-orange-300': buildResult.consistency.grade === 'D',
+                              'bg-red-900 text-red-300': buildResult.consistency.grade === 'F',
+                            }"
+                            x-text="'Grade: ' + buildResult.consistency.grade"
+                          ></div>
+                          <div class="text-xs text-slate-500" x-text="(buildResult.consistency.overall_score * 100).toFixed(0) + '/100'"></div>
+                        </div>
+                      </div>
+                      <div class="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                        <div class="flex justify-between">
+                          <span class="text-slate-400">2+ lands in opener</span>
+                          <span :class="buildResult.consistency.lands_in_opener >= 0.85 ? 'text-green-400' : buildResult.consistency.lands_in_opener >= 0.75 ? 'text-yellow-400' : 'text-red-400'"
+                            x-text="(buildResult.consistency.lands_in_opener * 100).toFixed(0) + '%'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-slate-400">Ramp by turn 3</span>
+                          <span :class="buildResult.consistency.ramp_by_turn3 >= 0.75 ? 'text-green-400' : buildResult.consistency.ramp_by_turn3 >= 0.6 ? 'text-yellow-400' : 'text-red-400'"
+                            x-text="(buildResult.consistency.ramp_by_turn3 * 100).toFixed(0) + '%'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-slate-400">Commander on curve</span>
+                          <span :class="buildResult.consistency.commander_on_curve >= 0.65 ? 'text-green-400' : buildResult.consistency.commander_on_curve >= 0.5 ? 'text-yellow-400' : 'text-red-400'"
+                            x-text="(buildResult.consistency.commander_on_curve * 100).toFixed(0) + '%'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-slate-400">Interaction by turn 5</span>
+                          <span :class="buildResult.consistency.interaction_by_turn5 >= 0.80 ? 'text-green-400' : buildResult.consistency.interaction_by_turn5 >= 0.65 ? 'text-yellow-400' : 'text-red-400'"
+                            x-text="(buildResult.consistency.interaction_by_turn5 * 100).toFixed(0) + '%'"></span>
+                        </div>
+                        <div class="flex justify-between col-span-2">
+                          <span class="text-slate-400">Enabler + payoff by turn 6</span>
+                          <span :class="buildResult.consistency.enabler_payoff_by_turn6 >= 0.7 ? 'text-green-400' : buildResult.consistency.enabler_payoff_by_turn6 >= 0.5 ? 'text-yellow-400' : 'text-red-400'"
+                            x-text="(buildResult.consistency.enabler_payoff_by_turn6 * 100).toFixed(0) + '%'"></span>
+                        </div>
+                      </div>
+                      <!-- Consistency warnings -->
+                      <template x-if="buildResult.consistency.warnings && buildResult.consistency.warnings.length > 0">
+                        <div class="mt-2 space-y-1">
+                          <template x-for="w in buildResult.consistency.warnings" :key="w">
+                            <div class="text-xs text-yellow-300 flex gap-1"><span>⚠</span><span x-text="w"></span></div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- Package Health -->
+                  <template x-if="buildResult.package_health">
+                    <div class="rounded-xl border bg-slate-900/60 p-4"
+                      :class="buildResult.package_health.is_healthy ? 'border-green-900/60' : 'border-yellow-900/60'">
+                      <div class="flex items-center justify-between mb-2">
+                        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide">📦 Package Health</div>
+                        <span class="text-xs font-bold px-2 py-0.5 rounded"
+                          :class="buildResult.package_health.is_healthy ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'"
+                          x-text="buildResult.package_health.is_healthy ? '✓ Healthy' : '⚠ Gaps'"></span>
+                      </div>
+                      <div class="text-xs text-slate-500 mb-2" x-text="buildResult.package_health.description"></div>
+                      <div class="grid grid-cols-3 gap-3 text-xs text-center mb-2">
+                        <div>
+                          <div class="font-semibold"
+                            :class="buildResult.package_health.enabler_count >= buildResult.package_health.min_enablers ? 'text-green-400' : 'text-red-400'"
+                            x-text="buildResult.package_health.enabler_count + '/' + buildResult.package_health.min_enablers"></div>
+                          <div class="text-slate-500">Enablers</div>
+                        </div>
+                        <div>
+                          <div class="font-semibold"
+                            :class="buildResult.package_health.payoff_count >= buildResult.package_health.min_payoffs ? 'text-green-400' : 'text-red-400'"
+                            x-text="buildResult.package_health.payoff_count + '/' + buildResult.package_health.min_payoffs"></div>
+                          <div class="text-slate-500">Payoffs</div>
+                        </div>
+                        <div>
+                          <div class="font-semibold text-slate-300" x-text="buildResult.package_health.support_count"></div>
+                          <div class="text-slate-500">Support</div>
+                        </div>
+                      </div>
+                      <template x-if="buildResult.package_health.warnings && buildResult.package_health.warnings.length > 0">
+                        <div class="space-y-1">
+                          <template x-for="w in buildResult.package_health.warnings" :key="w">
+                            <div class="text-xs text-yellow-300 flex gap-1"><span>⚠</span><span x-text="w"></span></div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- Nonbo Warnings -->
+                  <template x-if="buildResult.nonbo_warnings && buildResult.nonbo_warnings.length > 0">
+                    <div class="rounded-xl border border-red-900/50 bg-red-950/10 p-4">
+                      <div class="text-xs font-semibold text-red-400 uppercase tracking-wide mb-2">
+                        ⚡ Nonbo Warnings (<span x-text="buildResult.nonbo_warnings.length"></span>)
+                      </div>
+                      <div class="space-y-2">
+                        <template x-for="w in buildResult.nonbo_warnings" :key="w.rule_id">
+                          <div class="flex items-start gap-2">
+                            <span class="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+                              :class="{
+                                'bg-red-900 text-red-300': w.severity === 'high',
+                                'bg-orange-900 text-orange-300': w.severity === 'medium',
+                                'bg-yellow-900 text-yellow-300': w.severity === 'low',
+                              }"
+                              x-text="w.severity.toUpperCase()"></span>
+                            <div class="text-xs text-slate-300 leading-relaxed" x-text="w.message"></div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- Role Targets (compact) -->
+                  <template x-if="buildResult.role_targets">
+                    <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                      <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">🎯 Role Targets for This Build</div>
+                      <div class="grid grid-cols-4 gap-2 text-xs text-center">
+                        <template x-for="[role, count] in Object.entries(buildResult.role_targets).filter(([k]) => !['modifiers_applied'].includes(k))" :key="role">
+                          <div class="bg-slate-800 rounded px-2 py-1.5">
+                            <div class="font-bold text-slate-300" x-text="count"></div>
+                            <div class="text-slate-600 capitalize" x-text="role.replace('_', ' ')"></div>
+                          </div>
+                        </template>
+                      </div>
+                      <template x-if="buildResult.role_targets.modifiers_applied && buildResult.role_targets.modifiers_applied.length > 0">
+                        <div class="mt-2 text-xs text-slate-600">
+                          Adjustments: <span x-text="buildResult.role_targets.modifiers_applied.slice(0,3).join(' · ')"></span>
+                          <span x-show="buildResult.role_targets.modifiers_applied.length > 3"> + <span x-text="buildResult.role_targets.modifiers_applied.length - 3"></span> more</span>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                </div>
+              </template>
+
               <!-- Card tier tabs -->
               <div class="border-b border-slate-800 flex gap-1 mb-4">
                 <button class="tab-btn text-sm" :class="buildTab==='core' && 'active'" @click="buildTab='core'">
