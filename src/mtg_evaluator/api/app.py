@@ -91,6 +91,9 @@ _ROLE_ICON = {
     "sacrifice": "💀",
     "token": "🪙",
     "counter": "🔢",
+    "counterspell": "🔢",
+    "lands": "🌍",
+    "finisher": "🏁",
 }
 
 
@@ -100,6 +103,32 @@ def _role_status(count: int, minimum: int) -> str:
     if count >= minimum * 0.6:
         return "warn"
     return "low"
+
+
+def _serialize_commander_profile(profile):
+    if not profile:
+        return None
+    return {
+        "card_name": profile.card_name,
+        "provides_draw": profile.provides_draw,
+        "provides_ramp": profile.provides_ramp,
+        "provides_removal": profile.provides_removal,
+        "provides_protection": profile.provides_protection,
+        "provides_wincon": profile.provides_wincon,
+        "provides_tokens": profile.provides_tokens,
+        "provides_sac_outlet": profile.provides_sac_outlet,
+        "provides_recursion": profile.provides_recursion,
+        "provides_combo_piece": profile.provides_combo_piece,
+        "needs_creatures": profile.needs_creatures,
+        "needs_artifacts": profile.needs_artifacts,
+        "needs_spells": profile.needs_spells,
+        "needs_combat": profile.needs_combat,
+        "dependency_score": profile.dependency_score,
+        "protection_need": profile.protection_need,
+        "recast_importance": profile.recast_importance,
+        "preferred_archetypes": profile.preferred_archetypes,
+        "confidence": profile.confidence,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +149,7 @@ async def evaluate(req: EvaluateRequest):
     """
     try:
         with get_session() as session:
-            parsed = parse_decklist(session, req.decklist)
+            parsed = parse_decklist(req.decklist, session)
             result = evaluate_decklist(session, parsed, deck_name=req.deck_name)
             session.commit()
     except ValueError as e:
@@ -161,6 +190,7 @@ async def evaluate(req: EvaluateRequest):
             "minimum": rc.minimum,
             "status": _role_status(rc.count, rc.minimum),
             "gap": rc.gap,
+            "average_quality": rc.average_quality,
         }
         for rc in result.role_coverage
     ]
@@ -212,6 +242,23 @@ async def evaluate(req: EvaluateRequest):
         "combos": combo_list,
         "mass_land_denial": result.mass_land_denial_found,
         "role_coverage": role_rows,
+        "commander_profile": _serialize_commander_profile(result.commander_profile),
+        "role_targets": (
+            {
+                **result.role_targets.to_dict(),
+                "modifiers_applied": result.role_targets.modifiers_applied,
+            }
+            if result.role_targets
+            else None
+        ),
+        "mana_analysis": (
+            result.mana_analysis.to_dict() if result.mana_analysis else None
+        ),
+        "consistency": result.consistency.to_dict() if result.consistency else None,
+        "package_health": (
+            result.package_health.to_dict() if result.package_health else None
+        ),
+        "nonbo_warnings": [w.to_dict() for w in result.nonbo_warnings],
         "gaps": result.gaps,
         "upgrade_suggestions": upgrade_suggestions,
         "downgrade_suggestions": downgrade_suggestions,

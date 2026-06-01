@@ -234,7 +234,32 @@ def evaluate_deck(
     typer.echo("\n--- Role Coverage ---")
     for rc in result.role_coverage:
         status = "OK" if rc.meets_minimum else f"LOW (need {rc.gap} more)"
-        typer.echo(f"  {rc.function:<20} {rc.count:>3}  {status}")
+        quality = (
+            f"  quality={rc.average_quality:.1f}/5"
+            if rc.average_quality is not None
+            else ""
+        )
+        typer.echo(f"  {rc.function:<20} {rc.count:>3}  {status}{quality}")
+
+    if result.consistency:
+        typer.echo(
+            f"\nConsistency: {result.consistency.grade} "
+            f"({result.consistency.overall_score:.0%})"
+        )
+    if result.mana_analysis:
+        typer.echo(
+            f"Commander cast reliability: {result.mana_analysis.cast_reliability:.0%}"
+        )
+        for warning in result.mana_analysis.warnings:
+            typer.echo(f"  ! {warning}")
+    if result.package_health and result.package_health.warnings:
+        typer.echo("\n--- Package Health ---")
+        for warning in result.package_health.warnings:
+            typer.echo(f"  ! {warning}")
+    if result.nonbo_warnings:
+        typer.echo("\n--- Nonbos ---")
+        for warning in result.nonbo_warnings:
+            typer.echo(f"  ! {warning.message}")
 
     if result.gaps:
         typer.echo("\n--- Gaps ---")

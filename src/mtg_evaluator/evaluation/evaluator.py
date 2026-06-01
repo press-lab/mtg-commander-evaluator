@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from mtg_evaluator.card_functions import (
+    has_function,
     normalize_function,
     normalize_functions,
     role_bucket,
@@ -24,6 +25,24 @@ from mtg_evaluator.db.models import (
 from mtg_evaluator.evaluation.parser import ParsedDecklist, ParsedCard
 from mtg_evaluator.evaluation.bracket_llm import classify_bracket, BracketResult
 from mtg_evaluator.db.models import SpellbookCombo, SpellbookComboCard
+from mtg_evaluator.deckbuilding.commander_profile import (
+    CommanderProfileData,
+    get_or_generate_profile,
+)
+from mtg_evaluator.deckbuilding.consistency import (
+    ConsistencyReport,
+    compute_consistency,
+)
+from mtg_evaluator.deckbuilding.mana_analysis import ManaAnalysis, analyze_mana_base
+from mtg_evaluator.deckbuilding.packages import (
+    PackageHealth,
+    NonboWarning,
+    check_package_health,
+    detect_nonbos,
+    ARCHETYPE_PACKAGES,
+)
+from mtg_evaluator.deckbuilding.role_quality import compute_role_quality
+from mtg_evaluator.deckbuilding.role_targets import RoleTargets, compute_role_targets
 
 # Minimum recommended counts per function for a well-structured deck.
 # "removal" here counts *all* targeted interaction (removal + creature_removal).
@@ -37,6 +56,14 @@ _ROLE_MINIMUMS = {
 }
 
 _BRACKET_LABELS = ["casual", "bracket_2", "bracket_3", "bracket_4", "cedh"]
+_BRACKET_INT = {
+    "casual": 1,
+    "bracket_1": 1,
+    "bracket_2": 2,
+    "bracket_3": 3,
+    "bracket_4": 4,
+    "cedh": 5,
+}
 
 # Hard B4 floor — mass land denial cards (Brackets 1-3 explicitly prohibit these)
 MASS_LAND_DENIAL: frozenset[str] = frozenset(
@@ -236,6 +263,7 @@ class RoleCoverage:
     function: str
     count: int
     minimum: int
+    average_quality: float | None = None
 
     @property
     def gap(self) -> int:
@@ -263,6 +291,12 @@ class EvaluationResult:
     unclassified_cards: list[str]
     unresolved_cards: list[str]
     improvement_suggestions: list[dict]
+    commander_profile: CommanderProfileData | None = None
+    role_targets: RoleTargets | None = None
+    mana_analysis: ManaAnalysis | None = None
+    consistency: ConsistencyReport | None = None
+    package_health: PackageHealth | None = None
+    nonbo_warnings: list[NonboWarning] = field(default_factory=list)
 
 
 def _get_classifications(session: Session, oracle_ids: list[str]) -> dict[str, dict]:
@@ -404,17 +438,78 @@ def _compute_synergy_score(
     return round(sum(scores) / len(scores), 2)
 
 
-def _role_coverage(classifications: dict[str, dict]) -> list[RoleCoverage]:
+def _role_coverage(
+    parsed_cards: list[ParsedCard],
+    classifications: dict[str, dict],
+    cards_by_oracle: dict[str, Card],
+    targets: RoleTargets | None = None,
+) -> list[RoleCoverage]:
     function_counts: dict[str, int] = {}
-    for cls in classifications.values():
-        card_roles = {role_bucket(fn) for fn in normalize_functions(cls["functions"])}
+    quality_totals: dict[str, float] = {}
+    quality_counts: dict[str, int] = {}
+
+    for parsed_card in parsed_cards:
+        cls = classifications.get(parsed_card.oracle_id, {})
+        functions = normalize_functions(cls.get("functions", []))
+        card_roles = {role_bucket(fn) for fn in functions}
+        card = cards_by_oracle.get(parsed_card.oracle_id)
+
         for role in card_roles:
-            function_counts[role] = function_counts.get(role, 0) + 1
+            function_counts[role] = function_counts.get(role, 0) + parsed_card.quantity
+
+            if card and role not in {"lands"}:
+                quality = compute_role_quality(
+                    role=role,
+                    cmc=float(card.cmc or 0),
+                    is_instant=bool(card.is_instant),
+                    is_sorcery=bool(card.is_sorcery),
+                    functions=functions,
+                    is_game_changer=card.name in GAME_CHANGERS,
+                    oracle_text=card.oracle_text or "",
+                )
+                quality_totals[role] = quality_totals.get(role, 0.0) + (
+                    quality * parsed_card.quantity
+                )
+                quality_counts[role] = (
+                    quality_counts.get(role, 0) + parsed_card.quantity
+                )
+
+        if card and card.is_land:
+            function_counts["lands"] = (
+                function_counts.get("lands", 0) + parsed_card.quantity
+            )
 
     coverage = []
-    for role, minimum in _ROLE_MINIMUMS.items():
+    target_map = targets.to_dict() if targets else dict(_ROLE_MINIMUMS)
+    role_order = [
+        "lands",
+        "ramp",
+        "draw",
+        "removal",
+        "board_wipe",
+        "protection",
+        "finisher",
+    ]
+    roles = [role for role in role_order if role in target_map]
+    roles.extend(role for role in target_map if role not in roles)
+
+    for role in roles:
+        minimum = target_map[role]
         count = function_counts.get(role_bucket(role), 0)
-        coverage.append(RoleCoverage(function=role, count=count, minimum=minimum))
+        quality_count = quality_counts.get(role, 0)
+        average_quality = (
+            round(quality_totals[role] / quality_count, 2)
+            if quality_count and role in quality_totals
+            else None
+        )
+        coverage.append(
+            RoleCoverage(
+                function=role,
+                count=count,
+                minimum=minimum,
+                average_quality=average_quality,
+            )
+        )
 
     return coverage
 
@@ -467,6 +562,216 @@ def _get_suggestions(
     return suggestions
 
 
+def _cards_by_oracle(session: Session, oracle_ids: list[str]) -> dict[str, Card]:
+    if not oracle_ids:
+        return {}
+    cards = session.scalars(select(Card).where(Card.oracle_id.in_(oracle_ids))).all()
+    return {card.oracle_id: card for card in cards}
+
+
+def _flat_functions(
+    parsed_cards: list[ParsedCard],
+    classifications: dict[str, dict],
+) -> list[str]:
+    functions: list[str] = []
+    for parsed_card in parsed_cards:
+        card_functions = normalize_functions(
+            classifications.get(parsed_card.oracle_id, {}).get("functions", [])
+        )
+        for _ in range(parsed_card.quantity):
+            functions.extend(card_functions)
+    return functions
+
+
+def _card_functions_by_name(
+    parsed_cards: list[ParsedCard],
+    cards_by_oracle: dict[str, Card],
+    classifications: dict[str, dict],
+) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for parsed_card in parsed_cards:
+        card = cards_by_oracle.get(parsed_card.oracle_id)
+        name = card.name if card else parsed_card.raw_name
+        out[name] = normalize_functions(
+            classifications.get(parsed_card.oracle_id, {}).get("functions", [])
+        )
+    return out
+
+
+def _count_role_cards(
+    parsed_cards: list[ParsedCard],
+    classifications: dict[str, dict],
+    role: str,
+) -> int:
+    return sum(
+        parsed_card.quantity
+        for parsed_card in parsed_cards
+        if has_function(
+            classifications.get(parsed_card.oracle_id, {}).get("functions", []), role
+        )
+    )
+
+
+def _count_interaction_cards(
+    parsed_cards: list[ParsedCard],
+    classifications: dict[str, dict],
+) -> int:
+    interaction_roles = {"removal", "board_wipe", "counterspell"}
+    count = 0
+    for parsed_card in parsed_cards:
+        functions = normalize_functions(
+            classifications.get(parsed_card.oracle_id, {}).get("functions", [])
+        )
+        if any(role_bucket(fn) in interaction_roles for fn in functions):
+            count += parsed_card.quantity
+    return count
+
+
+def _phase5_analysis(
+    session: Session,
+    parsed: ParsedDecklist,
+    classifications: dict[str, dict],
+    cards_by_oracle: dict[str, Card],
+    archetype: str | None,
+    bracket: str | None,
+) -> tuple[
+    CommanderProfileData | None,
+    RoleTargets | None,
+    list[RoleCoverage],
+    list[str],
+    ManaAnalysis | None,
+    ConsistencyReport | None,
+    PackageHealth | None,
+    list[NonboWarning],
+]:
+    commander_card = (
+        cards_by_oracle.get(parsed.commander.oracle_id) if parsed.commander else None
+    )
+    partner_card = (
+        cards_by_oracle.get(parsed.partner.oracle_id) if parsed.partner else None
+    )
+    resolved_cards = parsed.all_cards
+
+    profile = (
+        get_or_generate_profile(session, commander_card) if commander_card else None
+    )
+
+    nonland_cards = [
+        cards_by_oracle[pc.oracle_id]
+        for pc in resolved_cards
+        if pc.oracle_id in cards_by_oracle and not cards_by_oracle[pc.oracle_id].is_land
+    ]
+    avg_cmc = (
+        sum(float(card.cmc or 0) for card in nonland_cards) / len(nonland_cards)
+        if nonland_cards
+        else 3.5
+    )
+
+    bracket_int = _BRACKET_INT.get(bracket or "", 3)
+    role_targets = compute_role_targets(
+        bracket=bracket_int,
+        profile=profile,
+        archetype=archetype,
+        avg_cmc=avg_cmc,
+    )
+    coverage = _role_coverage(
+        resolved_cards,
+        classifications,
+        cards_by_oracle,
+        targets=role_targets,
+    )
+    gaps = [
+        f"Low {rc.function.replace('_', ' ')}: {rc.count}/{rc.minimum} recommended"
+        for rc in coverage
+        if not rc.meets_minimum
+    ]
+
+    land_names = [
+        cards_by_oracle[pc.oracle_id].name
+        for pc in resolved_cards
+        if pc.oracle_id in cards_by_oracle and cards_by_oracle[pc.oracle_id].is_land
+        for _ in range(pc.quantity)
+    ]
+    color_identity = list(commander_card.color_identity or []) if commander_card else []
+    mana_analysis = (
+        analyze_mana_base(
+            land_names=land_names,
+            commander_mana_cost=commander_card.mana_cost,
+            commander_cmc=float(commander_card.cmc or 3),
+            deck_color_identity=color_identity,
+            partner_mana_cost=partner_card.mana_cost if partner_card else None,
+        )
+        if commander_card
+        else None
+    )
+
+    flat_functions = _flat_functions(resolved_cards, classifications)
+    package_health = check_package_health(archetype, flat_functions)
+    card_functions_by_name = _card_functions_by_name(
+        resolved_cards, cards_by_oracle, classifications
+    )
+
+    land_count = len(land_names)
+    ramp_count = _count_role_cards(resolved_cards, classifications, "ramp")
+    board_wipe_count = _count_role_cards(resolved_cards, classifications, "board_wipe")
+    interaction_count = _count_interaction_cards(resolved_cards, classifications)
+    creature_count = sum(
+        pc.quantity
+        for pc in resolved_cards
+        if pc.oracle_id in cards_by_oracle and cards_by_oracle[pc.oracle_id].is_creature
+    )
+
+    enabler_count = 0
+    payoff_count = 0
+    pkg = ARCHETYPE_PACKAGES.get(archetype or "")
+    if pkg:
+        for parsed_card in resolved_cards:
+            functions = normalize_functions(
+                classifications.get(parsed_card.oracle_id, {}).get("functions", [])
+            )
+            if any(fn in pkg.enabler_functions for fn in functions):
+                enabler_count += parsed_card.quantity
+            if any(fn in pkg.payoff_functions for fn in functions):
+                payoff_count += parsed_card.quantity
+
+    consistency = (
+        compute_consistency(
+            land_count=land_count,
+            ramp_count=ramp_count,
+            interaction_count=interaction_count,
+            commander_cmc=float(commander_card.cmc or 3),
+            enabler_count=enabler_count,
+            payoff_count=payoff_count,
+            deck_size=98 if parsed.partner else 99,
+        )
+        if commander_card
+        else None
+    )
+
+    nonbos = detect_nonbos(
+        archetype=archetype,
+        all_functions=flat_functions,
+        all_card_names=list(card_functions_by_name),
+        all_card_functions=card_functions_by_name,
+        ramp_count=ramp_count,
+        avg_cmc=avg_cmc,
+        land_count=land_count,
+        board_wipe_count=board_wipe_count,
+        creature_count=creature_count,
+    )
+
+    return (
+        profile,
+        role_targets,
+        coverage,
+        gaps,
+        mana_analysis,
+        consistency,
+        package_health,
+        nonbos,
+    )
+
+
 def evaluate_decklist(
     session: Session,
     parsed: ParsedDecklist,
@@ -476,6 +781,7 @@ def evaluate_decklist(
 
     all_oracle_ids = [pc.oracle_id for pc in parsed.all_cards]
     classifications = _get_classifications(session, all_oracle_ids)
+    cards_by_oracle = _cards_by_oracle(session, all_oracle_ids)
 
     classified = {oid for oid, cls in classifications.items() if cls["functions"]}
     unclassified = [
@@ -493,7 +799,7 @@ def evaluate_decklist(
 
     archetype = _guess_archetype(classifications)
     synergy = _compute_synergy_score(classifications, archetype)
-    coverage = _role_coverage(classifications)
+    coverage = _role_coverage(parsed.all_cards, classifications, cards_by_oracle)
     gaps = [
         f"Low {rc.function.replace('_', ' ')}: {rc.count}/{rc.minimum} recommended"
         for rc in coverage
@@ -501,7 +807,7 @@ def evaluate_decklist(
     ]
 
     commander_card = (
-        session.get(Card, parsed.commander.oracle_id) if parsed.commander else None
+        cards_by_oracle.get(parsed.commander.oracle_id) if parsed.commander else None
     )
     color_identity = list(commander_card.color_identity or []) if commander_card else []
 
@@ -528,6 +834,24 @@ def evaluate_decklist(
             f"LLM unavailable — estimated from {len(game_changers_found)} "
             f"Game Changer(s) found in deck."
         )
+
+    (
+        commander_profile,
+        role_targets,
+        coverage,
+        gaps,
+        mana_analysis,
+        consistency,
+        package_health,
+        nonbo_warnings,
+    ) = _phase5_analysis(
+        session=session,
+        parsed=parsed,
+        classifications=classifications,
+        cards_by_oracle=cards_by_oracle,
+        archetype=archetype,
+        bracket=bracket,
+    )
 
     suggestions = _get_suggestions(
         session,
@@ -568,10 +892,20 @@ def evaluate_decklist(
         legality_issues={},
         structural_notes={
             "role_coverage": {rc.function: rc.count for rc in coverage},
+            "role_targets": role_targets.to_dict() if role_targets else {},
+            "role_quality": {
+                rc.function: rc.average_quality
+                for rc in coverage
+                if rc.average_quality is not None
+            },
             "gaps": gaps,
             "unclassified_count": len(unclassified),
             "game_changers": game_changers_found,
             "bracket_reasoning": bracket_reasoning,
+            "mana_analysis": mana_analysis.to_dict() if mana_analysis else None,
+            "consistency": consistency.to_dict() if consistency else None,
+            "package_health": package_health.to_dict() if package_health else None,
+            "nonbos": [warning.to_dict() for warning in nonbo_warnings],
         },
         improvement_suggestions={"suggestions": suggestions},
     )
@@ -594,4 +928,10 @@ def evaluate_decklist(
         unclassified_cards=unclassified,
         unresolved_cards=parsed.unresolved,
         improvement_suggestions=suggestions,
+        commander_profile=commander_profile,
+        role_targets=role_targets,
+        mana_analysis=mana_analysis,
+        consistency=consistency,
+        package_health=package_health,
+        nonbo_warnings=nonbo_warnings,
     )

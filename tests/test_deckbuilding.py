@@ -107,35 +107,43 @@ class TestLogPopularity:
 
 
 class TestCompositeScore:
-    """_composite_score: weighted sum of five signals → 0–100."""
+    """_composite_score: weighted sum of Phase 5 scoring signals."""
 
     def test_all_zeros_returns_zero(self):
         assert _composite_score(0, 0, False, False, 0.0) == 0.0
 
     def test_max_inputs_returns_100(self):
-        score = _composite_score(5.0, 5.0, True, True, 1.0)
+        score = _composite_score(
+            5.0,
+            5.0,
+            5.0,
+            True,
+            1.0,
+            commander_fit=1.0,
+            package_bonus=1.0,
+        )
         assert score == 100.0
 
-    def test_archetype_weight_40(self):
+    def test_archetype_weight_30(self):
         # Only archetype score set, everything else zero
         score = _composite_score(5.0, 0, False, False, 0.0)
-        assert score == 40.0
+        assert score == 30.0
 
-    def test_bracket_weight_20(self):
+    def test_bracket_weight_10(self):
         score = _composite_score(0, 5.0, False, False, 0.0)
-        assert score == 20.0
+        assert score == 10.0
 
-    def test_role_weight_20(self):
-        score = _composite_score(0, 0, True, False, 0.0)
-        assert score == 20.0
+    def test_role_quality_weight_25(self):
+        score = _composite_score(0, 0, 5.0, False, 0.0)
+        assert score == 25.0
 
-    def test_combo_weight_10(self):
+    def test_combo_weight_7(self):
         score = _composite_score(0, 0, False, True, 0.0)
-        assert score == 10.0
+        assert score == 7.0
 
-    def test_popularity_weight_10(self):
+    def test_popularity_weight_3(self):
         score = _composite_score(0, 0, False, False, 1.0)
-        assert score == 10.0
+        assert score == 3.0
 
     def test_none_scores_treated_as_zero(self):
         score_none = _composite_score(None, None, False, False, 0.0)
@@ -143,9 +151,9 @@ class TestCompositeScore:
         assert score_none == score_zero
 
     def test_partial_archetype_score(self):
-        # arch=2.5/5 → 0.5 × 40 = 20
+        # arch=2.5/5 → 0.5 × 30 = 15
         score = _composite_score(2.5, 0, False, False, 0.0)
-        assert score == 20.0
+        assert score == 15.0
 
 
 class TestCardPoolProperties:
@@ -159,11 +167,13 @@ class TestCardPoolProperties:
             score=50.0,
             archetype_score=3.0,
             bracket_score=3.0,
+            role_quality=0.0,
             functions=[],
             is_game_changer=False,
             combo_ids=[],
             edhrec_decks=1000,
             type_line="Creature",
+            cmc=3.0,
         )
 
     def test_all_cards_combines_tiers(self):
