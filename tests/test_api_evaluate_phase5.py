@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 from mtg_evaluator.deckbuilding.consistency import ConsistencyReport
 from mtg_evaluator.deckbuilding.packages import NonboWarning, PackageHealth
-from mtg_evaluator.evaluation.deck_analysis import RoleCoverage, phase5_structure_score
+from mtg_evaluator.evaluation.deck_analysis import (
+    RoleCoverage,
+    phase5_score_fields,
+    phase5_structure_score,
+)
 
 
 def _result(
@@ -79,6 +83,12 @@ def test_structure_score_drops_when_mana_reliability_worsens():
     assert poor < good
 
 
+def test_deck_score_matches_structure_score():
+    fields = phase5_score_fields(_result(), total_cards=99)
+
+    assert fields["deck_score"] == fields["structure_score"]
+
+
 def test_structure_score_drops_when_role_gaps_worsen():
     good = phase5_structure_score(_result(), total_cards=99)
     poor = phase5_structure_score(
@@ -94,6 +104,23 @@ def test_structure_score_drops_when_role_gaps_worsen():
     )
 
     assert poor < good
+
+
+def test_structure_score_drops_when_unresolved_or_unclassified_worsen():
+    good = phase5_structure_score(_result(), total_cards=99)
+    poor = phase5_structure_score(
+        _result(unresolved=6, unclassified=6),
+        total_cards=99,
+    )
+
+    assert poor < good
+
+
+def test_structure_score_improves_or_maintains_with_healthy_package_balance():
+    healthy = phase5_structure_score(_result(package_healthy=True), total_cards=99)
+    unhealthy = phase5_structure_score(_result(package_healthy=False), total_cards=99)
+
+    assert healthy >= unhealthy
 
 
 def test_structure_score_drops_when_nonbos_worsen():

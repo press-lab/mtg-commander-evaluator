@@ -276,6 +276,15 @@ def phase5_structure_score(result, total_cards: int) -> float:
     return round(max(0.0, min(1.0, raw - nonbo_penalty - clean_penalty)) * 100, 1)
 
 
+def phase5_score_fields(result, total_cards: int) -> dict[str, float]:
+    """Return summary score fields for API compatibility."""
+    structure_score = phase5_structure_score(result, total_cards)
+    return {
+        "deck_score": structure_score,
+        "structure_score": structure_score,
+    }
+
+
 def role_coverage(
     parsed_cards: list[ParsedCard],
     classifications: dict[str, dict],

@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from mtg_evaluator.db.connection import get_session
 from mtg_evaluator.evaluation.parser import parse_decklist
 from mtg_evaluator.evaluation.evaluator import evaluate_decklist
-from mtg_evaluator.evaluation.deck_analysis import phase5_structure_score
+from mtg_evaluator.evaluation.deck_analysis import phase5_score_fields
 
 app = FastAPI(title="MTG Commander Evaluator", version="0.1.0")
 
@@ -162,7 +162,7 @@ async def evaluate(req: EvaluateRequest):
 
     # Phase 5 structure score from the actual pasted decklist.
     total_cards = len(parsed.all_cards) or 1
-    structure_score = phase5_structure_score(result, total_cards)
+    score_fields = phase5_score_fields(result, total_cards)
 
     # Role coverage serialization
     role_rows = [
@@ -239,8 +239,7 @@ async def evaluate(req: EvaluateRequest):
         ),
         "bracket_color": _BRACKET_COLOR.get(bracket_int, "#888"),
         "bracket_reasoning": result.bracket_reasoning,
-        "deck_score": structure_score,
-        "structure_score": structure_score,
+        **score_fields,
         "game_changers": result.game_changers_found,
         "combos": combo_list,
         "mass_land_denial": result.mass_land_denial_found,
