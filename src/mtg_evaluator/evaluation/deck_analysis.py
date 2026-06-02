@@ -206,6 +206,76 @@ def analyze_actual_deck(
     )
 
 
+def phase5_structure_score(result, total_cards: int) -> float:
+    """
+    V1 structure score for pasted deck evaluation.
+
+    This uses only Phase 5 structural analysis and cleanliness signals; bracket
+    power, EDHREC lift, and ML-derived scoring are intentionally excluded.
+    """
+    coverages = list(result.role_coverage or [])
+    if coverages:
+        coverage_scores = [
+            min(1.0, rc.count / rc.minimum) if rc.minimum else 1.0 for rc in coverages
+        ]
+        role_coverage_pct = sum(coverage_scores) / len(coverage_scores)
+        role_quality_values = [
+            rc.average_quality / 5.0
+            for rc in coverages
+            if rc.average_quality is not None
+        ]
+        role_quality_pct = (
+            sum(role_quality_values) / len(role_quality_values)
+            if role_quality_values
+            else 0.6
+        )
+    else:
+        role_coverage_pct = 0.0
+        role_quality_pct = 0.6
+
+    mana_pct = result.mana_analysis.cast_reliability if result.mana_analysis else 0.6
+    consistency_pct = result.consistency.overall_score if result.consistency else 0.6
+
+    package = result.package_health
+    if not package:
+        package_pct = 1.0
+    else:
+        enabler_pct = (
+            min(1.0, package.enabler_count / package.min_enablers)
+            if package.min_enablers
+            else 1.0
+        )
+        payoff_pct = (
+            min(1.0, package.payoff_count / package.min_payoffs)
+            if package.min_payoffs
+            else 1.0
+        )
+        package_pct = (enabler_pct + payoff_pct) / 2
+
+    severity_penalty = {"high": 0.08, "medium": 0.05, "low": 0.025}
+    nonbo_penalty = min(
+        0.25,
+        sum(
+            severity_penalty.get(warning.severity, 0.04)
+            for warning in result.nonbo_warnings
+        ),
+    )
+    clean_penalty = min(
+        0.20,
+        (len(result.unclassified_cards) + len(result.unresolved_cards))
+        / max(total_cards, 1),
+    )
+
+    raw = (
+        role_coverage_pct * 0.30
+        + role_quality_pct * 0.15
+        + mana_pct * 0.20
+        + consistency_pct * 0.20
+        + package_pct * 0.15
+    )
+    return round(max(0.0, min(1.0, raw - nonbo_penalty - clean_penalty)) * 100, 1)
+
+
 def role_coverage(
     parsed_cards: list[ParsedCard],
     classifications: dict[str, dict],

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from mtg_evaluator.db.connection import get_session
 from mtg_evaluator.evaluation.parser import parse_decklist
 from mtg_evaluator.evaluation.evaluator import evaluate_decklist
+from mtg_evaluator.evaluation.deck_analysis import phase5_structure_score
 
 app = FastAPI(title="MTG Commander Evaluator", version="0.1.0")
 
@@ -159,27 +160,9 @@ async def evaluate(req: EvaluateRequest):
 
     bracket_int = _BRACKET_INT.get(result.bracket_estimate or "", 3)
 
-    # Deck score: weighted composite
-    #   synergy          30%
-    #   role coverage    40%  (how many roles are at/above minimum)
-    #   power ceiling    15%  (combos, GCs — only score positively at appropriate bracket)
-    #   cleanliness      15%  (low unclassified / unresolved)
-    synergy_pct = (result.synergy_score or 0) / 5.0
-    roles_met = sum(1 for rc in result.role_coverage if rc.meets_minimum)
-    roles_total = len(result.role_coverage)
-    role_pct = roles_met / roles_total if roles_total else 0
-    combo_pct = min(len(result.combos_found) / 3.0, 1.0)
-    gc_pct = min(len(result.game_changers_found) / 5.0, 1.0)
-    power_pct = combo_pct * 0.6 + gc_pct * 0.4
+    # Phase 5 structure score from the actual pasted decklist.
     total_cards = len(parsed.all_cards) or 1
-    clean_pct = 1.0 - min(
-        (len(result.unclassified_cards) + len(result.unresolved_cards)) / total_cards,
-        1.0,
-    )
-    deck_score = round(
-        synergy_pct * 30 + role_pct * 40 + power_pct * 15 + clean_pct * 15,
-        1,
-    )
+    structure_score = phase5_structure_score(result, total_cards)
 
     # Role coverage serialization
     role_rows = [
@@ -256,7 +239,8 @@ async def evaluate(req: EvaluateRequest):
         ),
         "bracket_color": _BRACKET_COLOR.get(bracket_int, "#888"),
         "bracket_reasoning": result.bracket_reasoning,
-        "deck_score": deck_score,
+        "deck_score": structure_score,
+        "structure_score": structure_score,
         "game_changers": result.game_changers_found,
         "combos": combo_list,
         "mass_land_denial": result.mass_land_denial_found,
