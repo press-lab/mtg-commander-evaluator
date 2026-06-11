@@ -27,6 +27,10 @@ from mtg_evaluator.evaluation.deck_analysis import (
     analyze_actual_deck,
     role_coverage,
 )
+from mtg_evaluator.evaluation.recommendations import (
+    RecommendationReport,
+    build_recommendations,
+)
 from mtg_evaluator.db.models import SpellbookCombo, SpellbookComboCard
 from mtg_evaluator.deckbuilding.commander_profile import (
     CommanderProfileData,
@@ -236,6 +240,7 @@ class EvaluationResult:
     consistency: ConsistencyReport | None = None
     package_health: PackageHealth | None = None
     nonbo_warnings: list[NonboWarning] = field(default_factory=list)
+    recommendations: RecommendationReport | None = None
 
 
 def _get_classifications(session: Session, oracle_ids: list[str]) -> dict[str, dict]:
@@ -512,13 +517,50 @@ def evaluate_decklist(
     package_health = analysis.package_health
     nonbo_warnings = analysis.nonbo_warnings
 
-    suggestions = _get_suggestions(
-        session,
-        archetype,
-        bracket,
-        deck_oracle_ids=set(all_oracle_ids),
-        color_identity=color_identity,
+    # Recommendation engine: missing staples, gap fillers, cut candidates
+    partner_card = (
+        cards_by_oracle.get(parsed.partner.oracle_id) if parsed.partner else None
     )
+    role_gaps = {rc.function: rc.gap for rc in coverage}
+    combo_oracle_ids: set[str] = set()
+    for hit in combos_found:
+        combo_oracle_ids |= (
+            _COMBO_CARD_SET_CACHE.get(hit.spellbook_id, frozenset())
+            & all_oracle_id_set
+        )
+
+    recommendations = build_recommendations(
+        session=session,
+        parsed_cards=parsed.all_cards,
+        classifications=classifications,
+        cards_by_oracle=cards_by_oracle,
+        commander=commander_card,
+        partner=partner_card,
+        archetype=archetype,
+        bracket_int=_BRACKET_INT.get(bracket or "", 3),
+        role_gaps=role_gaps,
+        combo_oracle_ids=combo_oracle_ids,
+        mass_land_denial=MASS_LAND_DENIAL,
+    )
+
+    # Flat list kept for backward compatibility — staples first, then archetype picks
+    suggestions = [
+        {
+            "name": r.name,
+            "oracle_id": r.oracle_id,
+            "reason": r.reason,
+            "inclusion_rate": r.inclusion_rate,
+        }
+        for r in recommendations.staples_missing
+    ]
+    if not suggestions:
+        suggestions = _get_suggestions(
+            session,
+            archetype,
+            bracket,
+            deck_oracle_ids=set(all_oracle_ids),
+            color_identity=color_identity,
+        )
 
     # Persist decklist
     decklist = Decklist(
@@ -566,7 +608,10 @@ def evaluate_decklist(
             "package_health": package_health.to_dict() if package_health else None,
             "nonbos": [warning.to_dict() for warning in nonbo_warnings],
         },
-        improvement_suggestions={"suggestions": suggestions},
+        improvement_suggestions={
+            "suggestions": suggestions,
+            "recommendations": recommendations.to_dict(),
+        },
     )
     session.add(db_eval)
     session.flush()
@@ -593,4 +638,5 @@ def evaluate_decklist(
         consistency=consistency,
         package_health=package_health,
         nonbo_warnings=nonbo_warnings,
+        recommendations=recommendations,
     )

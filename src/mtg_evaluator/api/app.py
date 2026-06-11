@@ -257,6 +257,9 @@ async def evaluate(req: EvaluateRequest):
         ),
         "nonbo_warnings": [w.to_dict() for w in result.nonbo_warnings],
         "gaps": result.gaps,
+        "recommendations": (
+            result.recommendations.to_dict() if result.recommendations else None
+        ),
         "upgrade_suggestions": upgrade_suggestions,
         "downgrade_suggestions": downgrade_suggestions,
         "unclassified_count": len(result.unclassified_cards),
