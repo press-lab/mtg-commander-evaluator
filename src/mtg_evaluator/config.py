@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # EDHREC
     edhrec_top_url: str = "https://json.edhrec.com/pages/top/month.json"
     edhrec_top_n: int = 5000
+    edhrec_salt_url: str = "https://json.edhrec.com/pages/top/salt.json"
+    edhrec_commander_url: str = "https://json.edhrec.com/pages/commanders/{slug}.json"
+    edhrec_commander_cache_days: int = 30
 
 
 settings = Settings()

@@ -70,11 +70,14 @@ uv run uvicorn mtg_evaluator.api.app:app --reload
 
 ```bash
 uv run mtg-evaluator ingest-scryfall          # download + store Scryfall oracle cards
-uv run mtg-evaluator normalize-cards          # raw JSON → structured card tables
+uv run mtg-evaluator normalize-cards          # raw JSON → structured card tables (incl. price_usd)
 uv run mtg-evaluator detect-card-changes      # queue classification jobs for new/changed cards
-uv run mtg-evaluator run-classifier           # run LLM classifier on pending jobs
-uv run mtg-evaluator ingest-edhrec            # pull top-5000 EDHREC popularity stats
+uv run mtg-evaluator classify-cards           # run LLM classifier on pending jobs
+uv run mtg-evaluator ingest-edhrec-top        # pull top-5000 EDHREC popularity stats
+uv run mtg-evaluator ingest-edhrec-salt       # pull EDHREC salt scores (curated fallback offline)
 uv run mtg-evaluator ingest-spellbook         # pull all Commander Spellbook combos
+uv run mtg-evaluator generate-profiles        # batch-generate commander profiles (--top N / --commander)
+uv run mtg-evaluator serve                    # run the FastAPI app
 ```
 
 ---
@@ -90,9 +93,10 @@ uv run mtg-evaluator ingest-spellbook         # pull all Commander Spellbook com
 
 ### 4.2 EDHREC
 
-- URL: `https://json.edhrec.com/pages/top/month.json`
-- Top-5000 cards by global `num_decks` count stored in `edhrec_card_stats`
-- **Important constraint**: We have GLOBAL popularity only (num_decks per card), not per-commander inclusion rates. Per-commander affinity data requires scraping individual EDHREC commander pages — not yet implemented. Phase 5 uses global popularity as a low-weight (3%) floor signal only.
+- Top cards: `https://json.edhrec.com/pages/top/month.json` → top-5000 by global `num_decks` in `edhrec_card_stats`
+- Salt scores: `https://json.edhrec.com/pages/top/salt.json` → `edhrec_card_stats.salt_score` (0–4 scale; curated ~50-card fallback list if offline)
+- **Per-commander inclusion**: `https://json.edhrec.com/pages/commanders/<slug>.json` → `edhrec_commander_stats`. Lazily fetched on first pool build per commander (same pattern as commander profiles), cached 30 days (`edhrec_commander_cache_days`). Provides `inclusion_rate` and `synergy` (inclusion minus color-identity baseline; can be negative) per card.
+- Fetch note: use plain `httpx.get` with a minimal `User-Agent` — heavy browser-mimicking headers trigger TLS-level resets from the EDHREC CDN.
 
 ### 4.3 Commander Spellbook
 
@@ -111,7 +115,7 @@ uv run mtg-evaluator ingest-spellbook         # pull all Commander Spellbook com
 
 ## 5. Database Schema
 
-**Current Alembic head: `004_commander_profiles`**
+**Current Alembic head: `005_prices_salt_commander_stats`**
 
 ### Core card tables
 
@@ -140,7 +144,8 @@ uv run mtg-evaluator ingest-spellbook         # pull all Commander Spellbook com
 
 | Table | Purpose |
 |---|---|
-| `edhrec_card_stats` | Global `num_decks` count, pulled monthly |
+| `edhrec_card_stats` | Global `num_decks` count + `salt_score`, pulled monthly |
+| `edhrec_commander_stats` | Per-commander card inclusion rate + synergy, lazily fetched per commander page |
 
 ### Combo tables
 
@@ -238,9 +243,21 @@ Partner pairs: deck size is **98**, not 99. `has_partner = " + " in pool.command
 score = commander_fit×15 + archetype_fit×30 + role_quality×25
       + package_synergy×10 + bracket_fit×10 + combo_signal×7
       + popularity×3
+      + affinity_bonus (per-commander EDHREC, when available)
 ```
 
-All components normalized to 0–1 before weighting. Max theoretical score = 100.
+All components normalized to 0–1 before weighting; final score capped at 100.
+
+`affinity_bonus = inclusion_rate × 8 + max(0, synergy) × 12` — applied to non-lands only
+(lands keep their tier-based scores). Inclusion rewards staples for THIS commander;
+synergy rewards cards over-represented here vs. the color-identity baseline.
+
+### Hard filters (before scoring)
+
+- **Color identity** — card identity must be a subset of the deck's
+- **Game Changers** — excluded below B3
+- **Budget** — `max_card_price` (USD per card); unknown prices pass (almost always bulk)
+- **Salt** — `salt_tolerance` any/low/medium/high → max salt 1.0/2.0/3.0; unsalted cards pass
 
 ### Component definitions
 
@@ -409,7 +426,7 @@ All endpoints served by FastAPI at `http://localhost:8000`.
 | `POST` | `/api/build` | Build a card pool (+ optional LLM assembly) |
 | `GET` | `/api/commanders` | Find commanders by archetype and color |
 | `GET` | `/api/browse` | Browse cards by archetype, bracket, role, color |
-| `GET` | `/api/card/{oracle_id}` | Card detail |
+| `GET` | `/api/card/{oracle_id}` | Card detail: characteristics, functions, scores, EDHREC stats, combos |
 | `GET` | `/api/archetypes` | Top archetypes for a commander |
 | `GET` | `/api/archetypes/all` | Full canonical archetype list |
 | `GET` | `/api/search/commanders` | Autocomplete commander search |
@@ -528,24 +545,29 @@ src/mtg_evaluator/
 
 ## 19. Pending Work
 
+### Completed since first draft (June 2026)
+
+- ✅ Mana analysis wired into evaluator, assembler, `/api/build`, and both UI tabs
+- ✅ Deck evaluation Phase 5 enrichment (`deck_analysis.py`; structure score replaced old deck score)
+- ✅ `generate-profiles` CLI command (batch + single, `--force`)
+- ✅ `/api/card/{oracle_id}` detail endpoint
+- ✅ Budget filter (`cards.price_usd` from Scryfall; `max_card_price` knob; estimated deck price)
+- ✅ Salt tolerance (`edhrec_card_stats.salt_score`; any/low/medium/high knob)
+- ✅ Per-commander EDHREC inclusion + synergy (`edhrec_commander_stats`, lazy fetch, affinity bonus in scoring)
+- ✅ Commander profile + assembled-deck intelligence rendered in build tab
+
 ### High priority
 
 1. **Card classification coverage**: ~4,708 of 37,474 oracle cards classified. Priority: top-5000 EDHREC cards. Current coverage handles the vast majority of played cards; expand to full set at the end.
-2. **CLI command for commander profiles**: `mtg-evaluator generate-profiles --commander "Name"` to batch-generate or regenerate LLM profiles.
-3. **Integration tests**: `pytest -m integration` covering the full pool → assemble → validate pipeline.
-
-### Medium priority
-
-4. **Per-commander EDHREC data**: currently only global `num_decks`. Per-commander inclusion rates require scraping individual EDHREC commander pages (e.g. `https://json.edhrec.com/pages/commanders/[slug].json`). Once we have this, compute lift = `card_inclusion_rate / global_inclusion_rate` for a much stronger popularity signal.
-5. **Mana analysis wired into build response**: `mana_analysis.py` is implemented but not yet called from `pool.py` or returned from `/api/build`. Needs land names collected during pool build and passed to `analyze_mana_base()`.
-6. **Deck evaluation Phase 5 enrichment**: `evaluator.py` does not yet run consistency math or package health on submitted decklists. Add `compute_consistency()` and `check_package_health()` calls to `evaluate_decklist()` and surface in the evaluate tab UI.
+2. **Integration tests**: broaden `pytest -m integration` coverage of the full pool → assemble → validate pipeline with budget/salt/synergy active.
 
 ### Future / Phase 6+
 
-7. **Collaborative filtering / ML**: Once per-commander inclusion data exists across many decklists, matrix factorization can provide affinity scores (which cards appear together). Card embeddings from oracle text can surface synergy without explicit labels. No ML is needed until this data exists.
-8. **User accounts + saved decks**: allow users to save builds, track bracket history, and contribute inclusion data.
-9. **EDHREC affinity signal**: replace global `num_decks` with per-commander lift score (requires data accumulation from #4 or #8).
-10. **Commander profile confidence threshold**: surface profiles with `confidence < 0.6` in the UI with a "needs review" badge; provide UI path for manual correction.
+3. **Collaborative filtering / ML**: matrix factorization over per-commander inclusion data (now being accumulated in `edhrec_commander_stats`) plus card embeddings from oracle text. Deterministic logic remains primary.
+4. **User accounts + saved decks**: allow users to save builds, track bracket history, and contribute inclusion data.
+5. **Commander profile confidence threshold**: surface profiles with `confidence < 0.6` in the UI with a "needs review" badge; provide UI path for manual correction.
+6. **Total-deck budget mode**: current budget is a per-card cap; a total-deck budget would need allocation logic in the assembler.
+7. **Unpriced expensive cards**: cards whose Scryfall representative printing has no USD price (e.g. some reserved-list cards) pass the budget filter; consider a curated price floor list.
 
 ---
 

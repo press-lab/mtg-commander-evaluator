@@ -174,3 +174,120 @@ def run_edhrec_ingestion(
         f"Upserted {matched} cards into edhrec_card_stats. ({skipped} names unmatched)"
     )
     return matched
+
+
+# ---------------------------------------------------------------------------
+# Salt scores
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_SALT_LABEL_RE = _re.compile(r"Salt\s*Score:\s*([\d.]+)", _re.IGNORECASE)
+
+# Fallback when the EDHREC salt page is unreachable. Approximate scores from
+# recent EDHREC community salt surveys (0-4 scale). Only the saltiest cards
+# matter for filtering — everything absent is treated as unsalted.
+_CURATED_SALT: dict[str, float] = {
+    "Stasis": 3.3, "Winter Orb": 3.3, "Armageddon": 3.2, "Static Orb": 3.1,
+    "Nether Void": 3.0, "Tergrid, God of Fright // Tergrid's Lantern": 3.0,
+    "Vorinclex, Voice of Hunger": 3.0, "Obliterate": 2.9, "Expropriate": 2.9,
+    "Jin-Gitaxias, Core Augur": 2.9, "Ravages of War": 2.9, "Sunder": 2.8,
+    "Decree of Annihilation": 2.8, "Grand Arbiter Augustin IV": 2.8,
+    "Jokulhaups": 2.8, "Blood Moon": 2.7, "Cyclonic Rift": 2.7,
+    "Opposition Agent": 2.7, "Mindslaver": 2.7, "Narset, Parter of Veils": 2.6,
+    "Hokori, Dust Drinker": 2.6, "Drannith Magistrate": 2.6, "Humility": 2.6,
+    "The Tabernacle at Pendrell Vale": 2.6, "Rule of Law": 2.5,
+    "Time Stretch": 2.5, "Smokestack": 2.5, "Contamination": 2.5,
+    "Nexus of Fate": 2.5, "Notion Thief": 2.4, "Thoughts of Ruin": 2.4,
+    "Back to Basics": 2.4, "Sen Triplets": 2.4, "Possessed Portal": 2.4,
+    "Impending Disaster": 2.3, "Stranglehold": 2.3, "Void Winnower": 2.3,
+    "Sheoldred, the Apocalypse": 2.3, "Orcish Bowmasters": 2.3,
+    "Rhystic Study": 2.2, "Thassa's Oracle": 2.2, "Necropotence": 2.1,
+    "Gilded Drake": 2.1, "Counterspell": 1.8, "Sol Ring": 1.6,
+    "Smothering Tithe": 1.9, "Dockside Extortionist": 2.2,
+    "Fierce Guardianship": 2.0, "Force of Will": 1.9, "Demonic Tutor": 1.7,
+}
+
+
+def _extract_salt(card: dict) -> float | None:
+    """Pull a salt score from an EDHREC cardview (field or label text)."""
+    if isinstance(card.get("salt"), (int, float)):
+        return round(float(card["salt"]), 2)
+    label = card.get("label") or ""
+    m = _SALT_LABEL_RE.search(label)
+    if m:
+        try:
+            return round(float(m.group(1)), 2)
+        except ValueError:
+            return None
+    return None
+
+
+def run_salt_ingestion(
+    session: Session,
+    json_file: Path | None = None,
+) -> int:
+    """
+    Fetch EDHREC salt scores and store them on edhrec_card_stats.salt_score.
+    Falls back to the curated list if the remote page is unreachable or
+    yields no scores. Returns number of rows updated.
+    """
+    salt_by_name: dict[str, float] = {}
+
+    try:
+        if json_file:
+            data = json.loads(json_file.read_text(encoding="utf-8"))
+            cards = _collect_all_cards(data, top_n=1000, client=None)
+        else:
+            url = settings.edhrec_salt_url
+            print(f"Fetching EDHREC salt scores from {url} ...")
+            with httpx.Client(headers=_HEADERS) as client:
+                data = _fetch_page(client, url)
+                cards = _collect_all_cards(data, top_n=1000, client=client)
+        for card in cards:
+            name = card.get("name")
+            salt = _extract_salt(card)
+            if name and salt is not None:
+                salt_by_name[name] = salt
+    except Exception as exc:
+        print(f"EDHREC salt fetch failed ({exc}); using curated fallback list.")
+
+    if not salt_by_name:
+        salt_by_name = dict(_CURATED_SALT)
+        print(f"Using curated salt list: {len(salt_by_name)} cards.")
+    else:
+        print(f"Fetched salt scores for {len(salt_by_name)} cards.")
+
+    name_map = _name_to_oracle_id(session, list(salt_by_name))
+    unmatched = [n for n in salt_by_name if n not in name_map]
+    if unmatched:
+        front_names = [n.split(" // ")[0] for n in unmatched]
+        front_map = _name_to_oracle_id(session, front_names)
+        for original, front in zip(unmatched, front_names):
+            if front in front_map:
+                name_map[original] = front_map[front]
+
+    updated = 0
+    now = datetime.utcnow()
+    for name, salt in salt_by_name.items():
+        oracle_id = name_map.get(name)
+        if not oracle_id:
+            continue
+        existing = session.get(EDHRecCardStats, oracle_id)
+        if existing:
+            existing.salt_score = salt
+        else:
+            # Salty card outside the top-N popularity list — still store it
+            session.add(EDHRecCardStats(
+                oracle_id=oracle_id,
+                card_name=name,
+                num_decks=0,
+                rank=0,
+                salt_score=salt,
+                fetched_at=now,
+            ))
+        updated += 1
+
+    session.flush()
+    print(f"Salt scores stored for {updated} cards.")
+    return updated

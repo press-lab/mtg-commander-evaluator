@@ -95,6 +95,23 @@ def ingest_edhrec_top(
     typer.echo(f"EDHREC ingestion complete: {count} cards stored.")
 
 
+@app.command("ingest-edhrec-salt")
+def ingest_edhrec_salt(
+    json_file: Optional[Path] = typer.Option(
+        None,
+        "--json-file",
+        help="Load from a locally saved EDHREC salt JSON instead of fetching.",
+    ),
+) -> None:
+    """Fetch EDHREC salt scores and store on edhrec_card_stats (curated fallback if offline)."""
+    from mtg_evaluator.db.connection import get_session
+    from mtg_evaluator.ingestion.edhrec import run_salt_ingestion
+
+    with get_session() as session:
+        count = run_salt_ingestion(session, json_file=json_file)
+    typer.echo(f"Salt ingestion complete: {count} cards updated.")
+
+
 @app.command("ingest-spellbook")
 def ingest_spellbook() -> None:
     """Fetch Commander Spellbook combo database and store in spellbook_combos tables."""
@@ -155,6 +172,84 @@ def classify_cards(
             f"Done. Total={stats.total} Succeeded={stats.succeeded} "
             f"Skipped={stats.skipped} Failed={stats.failed}"
         )
+
+
+@app.command("generate-profiles")
+def generate_profiles(
+    commander: Optional[str] = typer.Option(
+        None,
+        "--commander",
+        "-c",
+        help="Generate a profile for a single commander by exact name.",
+    ),
+    top: int = typer.Option(
+        100,
+        "--top",
+        "-n",
+        help="Batch mode: generate profiles for the top N EDHREC legendary creatures.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Regenerate even if a current-version profile exists (manual overrides are never touched).",
+    ),
+) -> None:
+    """Generate (or refresh) commander profiles via LLM, cached in commander_profiles."""
+    from sqlalchemy import select
+
+    from mtg_evaluator.db.connection import get_session
+    from mtg_evaluator.db.models import Card, EDHRecCardStats
+    from mtg_evaluator.db.models import CommanderProfile as DBCommanderProfile
+    from mtg_evaluator.deckbuilding.commander_profile import (
+        CURRENT_PROMPT_VERSION,
+        get_or_generate_profile,
+    )
+
+    with get_session() as session:
+        if commander:
+            cards = session.scalars(
+                select(Card).where(Card.name == commander, Card.is_legendary == True)  # noqa: E712
+            ).all()
+            if not cards:
+                typer.echo(f"Commander not found: {commander}", err=True)
+                raise typer.Exit(1)
+        else:
+            cards = session.scalars(
+                select(Card)
+                .join(EDHRecCardStats, EDHRecCardStats.oracle_id == Card.oracle_id)
+                .where(Card.is_legendary == True)  # noqa: E712
+                .where(Card.is_creature == True)  # noqa: E712
+                .order_by(EDHRecCardStats.num_decks.desc())
+                .limit(top)
+            ).all()
+            typer.echo(f"Found {len(cards)} top legendary creatures on EDHREC.")
+
+        generated = skipped = failed = 0
+        for i, card in enumerate(cards, 1):
+            existing = session.get(DBCommanderProfile, card.oracle_id)
+            if (
+                existing is not None
+                and existing.prompt_version == CURRENT_PROMPT_VERSION
+                and not force
+            ):
+                skipped += 1
+                continue
+
+            profile = get_or_generate_profile(session, card, force_regenerate=force)
+            if profile.confidence == 0.0:
+                failed += 1
+                typer.echo(f"  [{i}/{len(cards)}] FAILED: {card.name}", err=True)
+            else:
+                generated += 1
+                typer.echo(
+                    f"  [{i}/{len(cards)}] {card.name} — "
+                    f"provides: {', '.join(profile.provides_list) or 'nothing'} | "
+                    f"dependency {profile.dependency_score:.0f}/5"
+                )
+            # Commit per profile so an interrupted batch keeps its progress
+            session.commit()
+
+    typer.echo(f"Done. Generated={generated} Skipped={skipped} Failed={failed}")
 
 
 @app.command("validate-classification-schema")

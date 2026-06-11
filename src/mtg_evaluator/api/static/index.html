@@ -744,6 +744,49 @@
           </div>
         </div>
 
+        <!-- Budget -->
+        <div class="mb-4">
+          <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Budget (max $ per card)</label>
+          <div class="grid grid-cols-5 gap-1">
+            <template x-for="b in [{v:0,l:'Any'},{v:1,l:'$1'},{v:5,l:'$5'},{v:10,l:'$10'},{v:25,l:'$25'}]" :key="b.v">
+              <button
+                class="py-1.5 rounded-lg text-xs font-semibold border transition-all"
+                :class="buildForm.maxCardPrice === b.v
+                  ? 'bg-emerald-900 text-emerald-200 border-emerald-600'
+                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'"
+                @click="buildForm.maxCardPrice = b.v"
+                x-text="b.l"
+              ></button>
+            </template>
+          </div>
+          <div class="text-xs text-slate-500 mt-1" x-show="buildForm.maxCardPrice > 0">
+            Cards over $<span x-text="buildForm.maxCardPrice"></span> are excluded (unpriced cards pass)
+          </div>
+        </div>
+
+        <!-- Salt tolerance -->
+        <div class="mb-6">
+          <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Salt Tolerance</label>
+          <div class="grid grid-cols-4 gap-1">
+            <template x-for="s in ['any','low','medium','high']" :key="s">
+              <button
+                class="py-1.5 rounded-lg text-xs font-semibold border transition-all capitalize"
+                :class="buildForm.saltTolerance === s
+                  ? 'bg-rose-900 text-rose-200 border-rose-600'
+                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'"
+                @click="buildForm.saltTolerance = s"
+                x-text="s"
+              ></button>
+            </template>
+          </div>
+          <div class="text-xs text-slate-500 mt-1">
+            <span x-show="buildForm.saltTolerance === 'any'">No salt filtering — all cards allowed</span>
+            <span x-show="buildForm.saltTolerance === 'low'">Friendly tables — excludes anything above mild salt</span>
+            <span x-show="buildForm.saltTolerance === 'medium'">Excludes the saltiest cards (Stasis, Armageddon…)</span>
+            <span x-show="buildForm.saltTolerance === 'high'">Only the absolute saltiest cards excluded</span>
+          </div>
+        </div>
+
         <div class="flex gap-2">
           <button
             class="btn-primary flex-1"
@@ -852,6 +895,61 @@
                 </div>
               </div>
 
+              <!-- ── COMMANDER PROFILE ── -->
+              <template x-if="buildResult.commander_profile && buildResult.commander_profile.confidence > 0">
+                <div class="mb-5 rounded-xl border border-indigo-900/60 bg-indigo-950/10 p-4">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="text-xs font-semibold text-indigo-400 uppercase tracking-wide">
+                      👑 Commander Profile — <span x-text="buildResult.commander_profile.card_name"></span>
+                    </div>
+                    <span class="text-xs text-slate-600"
+                      x-text="'confidence ' + (buildResult.commander_profile.confidence * 100).toFixed(0) + '%'"></span>
+                  </div>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <div class="text-xs text-slate-500 mb-1">Provides (deck needs less of these)</div>
+                      <div class="flex flex-wrap gap-1">
+                        <template x-for="p in buildResult.commander_profile.provides" :key="p">
+                          <span class="card-pill text-green-300" x-text="p.replace('_',' ')"></span>
+                        </template>
+                        <span x-show="!buildResult.commander_profile.provides.length" class="text-xs text-slate-600">nothing notable</span>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-slate-500 mb-1">Needs (deck must supply these)</div>
+                      <div class="flex flex-wrap gap-1">
+                        <template x-for="n in buildResult.commander_profile.needs" :key="n">
+                          <span class="card-pill text-amber-300" x-text="n.replace(/_/g,' ')"></span>
+                        </template>
+                        <span x-show="!buildResult.commander_profile.needs.length" class="text-xs text-slate-600">no special requirements</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-3 gap-3">
+                    <template x-for="m in [
+                      {label: 'Commander dependency', val: buildResult.commander_profile.dependency_score},
+                      {label: 'Protection need', val: buildResult.commander_profile.protection_need},
+                      {label: 'Recast pressure', val: buildResult.commander_profile.recast_importance},
+                    ]" :key="m.label">
+                      <div>
+                        <div class="flex justify-between text-xs mb-1">
+                          <span class="text-slate-500" x-text="m.label"></span>
+                          <span class="text-slate-400 font-mono" x-text="m.val.toFixed(1) + '/5'"></span>
+                        </div>
+                        <div class="role-bar">
+                          <div class="role-bar-fill"
+                            :style="`width: ${(m.val / 5) * 100}%; background: ${m.val >= 4 ? '#ef4444' : m.val >= 2.5 ? '#eab308' : '#22c55e'}`"></div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                  <div x-show="buildResult.commander_profile.preferred_archetypes && buildResult.commander_profile.preferred_archetypes.length"
+                    class="mt-2 text-xs text-slate-500">
+                    Best archetypes: <span class="text-indigo-300" x-text="(buildResult.commander_profile.preferred_archetypes || []).join(', ')"></span>
+                  </div>
+                </div>
+              </template>
+
               <!-- ── ASSEMBLED DECK (AI) ── -->
               <template x-if="buildResult.assembled && !buildResult.assembled.error">
                 <div class="mb-5 rounded-xl border border-purple-700/60 bg-purple-950/10 p-4">
@@ -875,6 +973,67 @@
                     <div class="mb-3 p-2 rounded-lg bg-yellow-950 border border-yellow-700">
                       <div class="text-xs font-semibold text-yellow-400 mb-1">⚠ Assembly Warnings</div>
                       <template x-for="w in buildResult.assembled.validation_warnings" :key="w">
+                        <div class="text-xs text-yellow-300" x-text="w"></div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- Repair notes -->
+                  <template x-if="buildResult.assembled.repair_notes && buildResult.assembled.repair_notes.length > 0">
+                    <div class="mb-3 p-2 rounded-lg bg-sky-950/40 border border-sky-800">
+                      <div class="text-xs font-semibold text-sky-400 mb-1">🔧 Auto-Repairs Applied</div>
+                      <template x-for="n in buildResult.assembled.repair_notes" :key="n">
+                        <div class="text-xs text-sky-300" x-text="n"></div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- Final deck stats: consistency / mana / package -->
+                  <div class="mb-3 flex flex-wrap gap-2">
+                    <template x-if="buildResult.assembled.estimated_price != null">
+                      <span class="card-pill text-emerald-300"
+                        :title="buildResult.assembled.priced_card_count + ' cards with known prices'">
+                        💰 ~$<span x-text="buildResult.assembled.estimated_price.toFixed(0)"></span>
+                      </span>
+                    </template>
+                    <template x-if="buildResult.assembled.consistency">
+                      <span class="card-pill"
+                        :class="{
+                          'text-green-300': ['A','B'].includes(buildResult.assembled.consistency.grade),
+                          'text-yellow-300': buildResult.assembled.consistency.grade === 'C',
+                          'text-red-300': ['D','F'].includes(buildResult.assembled.consistency.grade),
+                        }">
+                        📊 Consistency: <span x-text="buildResult.assembled.consistency.grade"></span>
+                        (<span x-text="(buildResult.assembled.consistency.overall_score * 100).toFixed(0)"></span>%)
+                      </span>
+                    </template>
+                    <template x-if="buildResult.assembled.mana_analysis">
+                      <span class="card-pill"
+                        :class="buildResult.assembled.mana_analysis.cast_reliability >= 0.9 ? 'text-green-300' : buildResult.assembled.mana_analysis.cast_reliability >= 0.75 ? 'text-yellow-300' : 'text-red-300'">
+                        🎨 Cast commander: <span x-text="(buildResult.assembled.mana_analysis.cast_reliability * 100).toFixed(0)"></span>%
+                      </span>
+                    </template>
+                    <template x-if="buildResult.assembled.mana_analysis">
+                      <span class="card-pill text-slate-300">
+                        🌍 <span x-text="buildResult.assembled.mana_analysis.land_count"></span> lands
+                        (<span x-text="buildResult.assembled.mana_analysis.untapped_land_count"></span> untapped)
+                      </span>
+                    </template>
+                    <template x-if="buildResult.assembled.package_health">
+                      <span class="card-pill"
+                        :class="buildResult.assembled.package_health.is_healthy ? 'text-green-300' : 'text-yellow-300'">
+                        📦 Package: <span x-text="buildResult.assembled.package_health.is_healthy ? 'healthy' : 'gaps'"></span>
+                        (<span x-text="buildResult.assembled.package_health.enabler_count"></span>E /
+                        <span x-text="buildResult.assembled.package_health.payoff_count"></span>P)
+                      </span>
+                    </template>
+                  </div>
+
+                  <!-- Final deck warnings (mana + consistency + package + nonbos) -->
+                  <template x-if="assembledWarnings().length > 0">
+                    <div class="mb-3 p-2 rounded-lg bg-yellow-950/40 border border-yellow-800/60">
+                      <div class="text-xs font-semibold text-yellow-400 mb-1">⚠ Final Deck Warnings</div>
+                      <template x-for="w in assembledWarnings()" :key="w">
                         <div class="text-xs text-yellow-300" x-text="w"></div>
                       </template>
                     </div>
@@ -909,15 +1068,18 @@
                 x-text="'AI assembly failed: ' + (buildResult.assembled && buildResult.assembled.error)">
               </div>
 
-              <!-- ── PHASE 5: DECK INTELLIGENCE ── -->
+              <!-- ── PHASE 5: POOL ANALYSIS ── -->
               <template x-if="buildResult.consistency || buildResult.package_health || (buildResult.nonbo_warnings && buildResult.nonbo_warnings.length > 0)">
                 <div class="mb-5 space-y-3">
+                  <div x-show="buildResult.assembled && !buildResult.assembled.error" class="text-xs text-slate-600">
+                    The metrics below describe the full candidate pool (<span x-text="buildResult.total"></span> cards), not the final deck — see the AI-Built Deck panel above for final-deck numbers.
+                  </div>
 
                   <!-- Consistency Report -->
                   <template x-if="buildResult.consistency">
                     <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
                       <div class="flex items-center justify-between mb-3">
-                        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide">📊 Consistency</div>
+                        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wide">📊 Pool Consistency</div>
                         <div class="flex items-center gap-2">
                           <div class="text-xs font-bold px-2 py-0.5 rounded"
                             :class="{
@@ -1093,6 +1255,16 @@
                       <template x-for="fn in card.functions.slice(0,3)" :key="fn">
                         <span class="card-pill text-slate-400" x-text="fn"></span>
                       </template>
+                    </div>
+                    <!-- Commander synergy (per-commander EDHREC) -->
+                    <div class="w-14 text-right text-xs flex-shrink-0" x-show="card.commander_inclusion != null">
+                      <span class="text-purple-400" :title="'In ' + ((card.commander_inclusion || 0) * 100).toFixed(0) + '% of decks for this commander'"
+                        x-text="((card.commander_inclusion || 0) * 100).toFixed(0) + '%'"></span>
+                    </div>
+                    <!-- Price -->
+                    <div class="w-14 text-right text-xs flex-shrink-0" x-show="card.price_usd != null">
+                      <span :class="card.price_usd >= 20 ? 'text-amber-400' : 'text-slate-500'"
+                        x-text="'$' + card.price_usd.toFixed(card.price_usd >= 10 ? 0 : 2)"></span>
                     </div>
                     <!-- EDHREC count -->
                     <div class="w-16 text-right text-xs text-slate-600" x-show="card.edhrec_decks">
@@ -1370,6 +1542,8 @@ function app() {
       archetype: '',
       wantCombos: true,
       tutorDensity: 'light',
+      maxCardPrice: 0,
+      saltTolerance: 'any',
     },
     buildResult: null,
     buildLoading: false,
@@ -1462,6 +1636,8 @@ function app() {
             archetype: this.buildForm.archetype || null,
             want_combos: this.buildForm.wantCombos,
             tutor_density: this.buildForm.tutorDensity,
+            max_card_price: this.buildForm.maxCardPrice > 0 ? this.buildForm.maxCardPrice : null,
+            salt_tolerance: this.buildForm.saltTolerance,
             pool_size: 200,
             assemble: assemble,
           }),
@@ -1491,6 +1667,17 @@ function app() {
     },
 
     // ---- Assembled deck helpers ----
+    assembledWarnings() {
+      const a = this.buildResult?.assembled;
+      if (!a) return [];
+      return [
+        ...(a.mana_analysis?.warnings || []),
+        ...(a.consistency?.warnings || []),
+        ...(a.package_health?.warnings || []),
+        ...(a.nonbo_warnings || []).map(w => `[${w.severity}] ${w.message}`),
+      ];
+    },
+
     assembledCategories() {
       if (!this.buildResult?.assembled) return [];
       const a = this.buildResult.assembled;

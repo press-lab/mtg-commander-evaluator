@@ -40,7 +40,7 @@ from mtg_evaluator.db.models import (
     SpellbookComboCard,
 )
 from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS
-from mtg_evaluator.deckbuilding.request import DeckRequest
+from mtg_evaluator.deckbuilding.request import DeckRequest, SALT_THRESHOLDS
 from mtg_evaluator.deckbuilding.archetypes import normalize_archetype
 from mtg_evaluator.deckbuilding.lands import land_score
 from mtg_evaluator.deckbuilding.commander_profile import (
@@ -95,6 +95,11 @@ class PoolCard:
     role_quality_by_role: dict[str, float] = field(default_factory=dict)
     oracle_text: str = ""
     produced_mana: list[str] = field(default_factory=list)
+    price_usd: Optional[float] = None
+    salt_score: Optional[float] = None
+    # Per-commander EDHREC signals (None when no data for this commander)
+    commander_inclusion: Optional[float] = None  # 0-1 fraction of decks
+    commander_synergy: Optional[float] = None  # can be negative
 
 
 @dataclass
@@ -287,6 +292,14 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     # --- Commander profile (Phase 5) ---
     profile = get_or_generate_profile(session, commander)
 
+    # --- Per-commander EDHREC inclusion data (optional signal) ---
+    from mtg_evaluator.ingestion.edhrec_commander import get_or_fetch_commander_stats
+
+    try:
+        cmd_stats = get_or_fetch_commander_stats(session, commander, partner_card)
+    except Exception:
+        cmd_stats = {}
+
     pool = CardPool(
         request=request,
         commander_name=partner_display,
@@ -378,9 +391,11 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             Card.is_instant,
             Card.is_sorcery,
             Card.oracle_text,
+            Card.price_usd,
             CardArchetypeScore.score.label("arch_score"),
             CardBracketScore.score.label("brack_score"),
             EDHRecCardStats.num_decks,
+            EDHRecCardStats.salt_score,
         )
         .join(cls_subq, cls_subq.c.oracle_id == Card.oracle_id)
         .join(
@@ -426,6 +441,7 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         "light": 1.0,
         "heavy": 1.3,
     }.get(request.tutor_density, 1.0)
+    salt_cap = SALT_THRESHOLDS.get(request.salt_tolerance)
 
     all_scored: list[PoolCard] = []
 
@@ -438,6 +454,20 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         # Game Changer bracket filter
         is_gc = row.name in GAME_CHANGERS
         if is_gc and request.bracket < 3:
+            continue
+
+        # Budget filter — unknown prices pass (almost always bulk cards)
+        price = float(row.price_usd) if row.price_usd is not None else None
+        if (
+            request.max_card_price is not None
+            and price is not None
+            and price > request.max_card_price
+        ):
+            continue
+
+        # Salt filter — unknown salt passes (only ~top salty cards are scored)
+        salt = float(row.salt_score) if row.salt_score is not None else None
+        if salt_cap is not None and salt is not None and salt > salt_cap:
             continue
 
         functions = normalize_functions(fn_map.get(row.oracle_id, []))
@@ -509,6 +539,21 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             if is_tutor:
                 score = round(score * tutor_multiplier, 2)
 
+        # Per-commander EDHREC affinity bonus (non-lands only — lands keep
+        # their tier-based scores). Inclusion rewards staples for THIS
+        # commander; synergy rewards cards over-represented here vs. the
+        # color-identity baseline.
+        cmd_stat = cmd_stats.get(row.name) or cmd_stats.get(
+            row.name.split(" // ")[0]
+        )
+        cmd_inclusion = cmd_stat["inclusion_rate"] if cmd_stat else None
+        cmd_synergy = cmd_stat.get("synergy") if cmd_stat else None
+        if not is_land and cmd_stat:
+            affinity_bonus = (cmd_inclusion or 0.0) * 8 + max(
+                0.0, cmd_synergy or 0.0
+            ) * 12
+            score = round(min(100.0, score + affinity_bonus), 2)
+
         combo_ids_for_card = [
             cid
             for cid, oracles in combo_oracle_sets.items()
@@ -531,6 +576,10 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             cmc=cmc,
             role_quality_by_role=rq_by_role,
             oracle_text=oracle_text,
+            price_usd=price,
+            salt_score=salt,
+            commander_inclusion=cmd_inclusion,
+            commander_synergy=cmd_synergy,
         )
 
         # Tier assignment

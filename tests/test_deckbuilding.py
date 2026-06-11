@@ -520,7 +520,7 @@ class TestBrowseCardsIntegration:
 
     def test_gc_excluded_at_b1(self, session):
         from mtg_evaluator.deckbuilding.browse import browse_cards
-        from mtg_evaluator.evaluation.evaluator import GAME_CHANGERS
+        from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS
 
         results = browse_cards(session, archetype=None, bracket=1, limit=100)
         gc_found = [c.name for c in results if c.name in GAME_CHANGERS]
@@ -583,7 +583,7 @@ class TestBuildCardPoolIntegration:
     def test_gc_tutors_absent_at_b2(self, session):
         """Demonic Tutor etc. are GCs — NOT legal at B1/B2."""
         from mtg_evaluator.deckbuilding.pool import build_card_pool
-        from mtg_evaluator.evaluation.evaluator import GAME_CHANGERS
+        from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS
 
         req = DeckRequest(
             commander_name="Braids, Cabal Minion",

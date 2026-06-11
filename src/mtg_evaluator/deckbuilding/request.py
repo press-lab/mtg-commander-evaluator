@@ -27,6 +27,15 @@ BRACKET_COMBO_ALLOWANCE: dict[int, set[str]] = {
 }
 
 TutorDensity = Literal["none", "light", "heavy"]
+SaltTolerance = Literal["any", "low", "medium", "high"]
+
+# Max salt score allowed per tolerance level (EDHREC salt is 0-4).
+# "any" = no filtering. "low" = only mild cards. "high" = almost everything.
+SALT_THRESHOLDS: dict[str, float] = {
+    "low": 1.0,
+    "medium": 2.0,
+    "high": 3.0,
+}
 
 
 @dataclass
@@ -41,6 +50,8 @@ class DeckRequest:
     want_combos: bool = True
     allowed_combo_tags: set[str] = field(default_factory=set)  # derived from bracket
     tutor_density: TutorDensity = "light"
+    max_card_price: float | None = None  # USD cap per card; None = no budget limit
+    salt_tolerance: SaltTolerance = "any"  # filter cards above the salt threshold
     free_text_notes: str | None = None  # any extra user notes
 
     pool_size: int = 300  # how many cards to return

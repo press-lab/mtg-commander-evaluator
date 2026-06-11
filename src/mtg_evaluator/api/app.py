@@ -47,6 +47,8 @@ class BuildRequest(BaseModel):
     archetype: str | None = None
     want_combos: bool = True
     tutor_density: str = "light"
+    max_card_price: float | None = None  # USD per-card budget cap
+    salt_tolerance: str = "any"  # any | low | medium | high
     pool_size: int = 200
     assemble: bool = False  # if True, run LLM assembler after building pool
 
@@ -111,19 +113,8 @@ def _serialize_commander_profile(profile):
         return None
     return {
         "card_name": profile.card_name,
-        "provides_draw": profile.provides_draw,
-        "provides_ramp": profile.provides_ramp,
-        "provides_removal": profile.provides_removal,
-        "provides_protection": profile.provides_protection,
-        "provides_wincon": profile.provides_wincon,
-        "provides_tokens": profile.provides_tokens,
-        "provides_sac_outlet": profile.provides_sac_outlet,
-        "provides_recursion": profile.provides_recursion,
-        "provides_combo_piece": profile.provides_combo_piece,
-        "needs_creatures": profile.needs_creatures,
-        "needs_artifacts": profile.needs_artifacts,
-        "needs_spells": profile.needs_spells,
-        "needs_combat": profile.needs_combat,
+        "provides": profile.provides_list,
+        "needs": profile.needs_list,
         "dependency_score": profile.dependency_score,
         "protection_need": profile.protection_need,
         "recast_importance": profile.recast_importance,
@@ -302,6 +293,8 @@ async def build_pool(req: BuildRequest):
                 archetype=archetype,
                 want_combos=req.want_combos,
                 tutor_density=req.tutor_density,  # type: ignore[arg-type]
+                max_card_price=req.max_card_price,
+                salt_tolerance=req.salt_tolerance,  # type: ignore[arg-type]
                 pool_size=req.pool_size,
             )
             pool = build_card_pool(session, deck_req)
@@ -319,7 +312,28 @@ async def build_pool(req: BuildRequest):
 
             assembled_deck = assemble_deck(pool, bracket=req.bracket)
             warnings = validate_assembled_deck(assembled_deck, pool.role_targets)
+
+            # Estimated USD price of the final deck (known prices only)
+            price_by_name = {
+                c.name: c.price_usd
+                for c in pool.all_cards
+                if c.price_usd is not None
+            }
+            assembled_names = [
+                name
+                for cat in (
+                    assembled_deck.lands, assembled_deck.ramp, assembled_deck.draw,
+                    assembled_deck.removal, assembled_deck.synergy,
+                    assembled_deck.combo, assembled_deck.other,
+                )
+                for name in cat
+            ]
+            priced = [price_by_name[n] for n in assembled_names if n in price_by_name]
+            estimated_price = round(sum(priced), 2) if priced else None
+
             assembled = {
+                "estimated_price": estimated_price,
+                "priced_card_count": len(priced),
                 "lands": assembled_deck.lands,
                 "ramp": assembled_deck.ramp,
                 "draw": assembled_deck.draw,
@@ -370,6 +384,10 @@ async def build_pool(req: BuildRequest):
             "is_game_changer": c.is_game_changer,
             "combo_ids": c.combo_ids,
             "edhrec_decks": c.edhrec_decks,
+            "price_usd": c.price_usd,
+            "salt_score": c.salt_score,
+            "commander_inclusion": c.commander_inclusion,
+            "commander_synergy": c.commander_synergy,
         }
 
     # --- Phase 5: serialize intelligence layers ---
@@ -383,30 +401,7 @@ async def build_pool(req: BuildRequest):
 
     nonbo_out = [w.to_dict() for w in pool.nonbo_warnings]
 
-    profile_out = None
-    if pool.commander_profile:
-        p = pool.commander_profile
-        profile_out = {
-            "card_name": p.card_name,
-            "provides_draw": p.provides_draw,
-            "provides_ramp": p.provides_ramp,
-            "provides_removal": p.provides_removal,
-            "provides_protection": p.provides_protection,
-            "provides_wincon": p.provides_wincon,
-            "provides_tokens": p.provides_tokens,
-            "provides_sac_outlet": p.provides_sac_outlet,
-            "provides_recursion": p.provides_recursion,
-            "provides_combo_piece": p.provides_combo_piece,
-            "needs_creatures": p.needs_creatures,
-            "needs_artifacts": p.needs_artifacts,
-            "needs_spells": p.needs_spells,
-            "needs_combat": p.needs_combat,
-            "dependency_score": p.dependency_score,
-            "protection_need": p.protection_need,
-            "recast_importance": p.recast_importance,
-            "preferred_archetypes": p.preferred_archetypes,
-            "confidence": p.confidence,
-        }
+    profile_out = _serialize_commander_profile(pool.commander_profile)
 
     return {
         "commander": pool.commander_name,
@@ -551,6 +546,100 @@ async def all_archetypes():
     from mtg_evaluator.deckbuilding.archetypes import CANONICAL_ARCHETYPES
 
     return {"archetypes": CANONICAL_ARCHETYPES}
+
+
+@app.get("/api/card/{oracle_id}")
+async def card_detail(oracle_id: str):
+    """
+    Full card detail: characteristics, image, latest classification (functions,
+    archetype/bracket scores), EDHREC popularity, and combos it participates in.
+    """
+    from sqlalchemy import select
+    from mtg_evaluator.db.models import (
+        Card, CardClassification, CardFunction, CardArchetypeScore,
+        CardBracketScore, EDHRecCardStats, SpellbookCombo, SpellbookComboCard,
+    )
+
+    with get_session() as session:
+        card = session.get(Card, oracle_id)
+        if not card:
+            raise HTTPException(status_code=404, detail="Card not found")
+
+        cls_row = session.execute(
+            select(CardClassification.id)
+            .where(CardClassification.oracle_id == oracle_id)
+            .where(CardClassification.is_valid == True)  # noqa: E712
+            .order_by(CardClassification.classified_at.desc())
+            .limit(1)
+        ).first()
+
+        functions: list[str] = []
+        archetype_scores: dict[str, int] = {}
+        bracket_scores: dict[str, int] = {}
+        if cls_row:
+            cls_id = cls_row.id
+            functions = list(session.scalars(
+                select(CardFunction.function_name)
+                .where(CardFunction.classification_id == cls_id)
+            ))
+            archetype_scores = {
+                r.archetype: r.score
+                for r in session.execute(
+                    select(CardArchetypeScore.archetype, CardArchetypeScore.score)
+                    .where(CardArchetypeScore.classification_id == cls_id)
+                ).all()
+            }
+            bracket_scores = {
+                r.bracket_level: r.score
+                for r in session.execute(
+                    select(CardBracketScore.bracket_level, CardBracketScore.score)
+                    .where(CardBracketScore.classification_id == cls_id)
+                ).all()
+            }
+
+        edhrec = session.get(EDHRecCardStats, oracle_id)
+
+        combo_rows = session.execute(
+            select(SpellbookCombo)
+            .join(SpellbookComboCard, SpellbookComboCard.combo_id == SpellbookCombo.spellbook_id)
+            .where(SpellbookComboCard.oracle_id == oracle_id)
+            .limit(10)
+        ).scalars().all()
+        combos = [
+            {
+                "id": combo.spellbook_id,
+                "tag": combo.bracket_tag,
+                "cards": [c.card_name for c in combo.cards],
+                "result": combo.results_description,
+            }
+            for combo in combo_rows
+        ]
+
+        from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS
+        out = {
+            "oracle_id": card.oracle_id,
+            "name": card.name,
+            "mana_cost": card.mana_cost,
+            "cmc": float(card.cmc or 0),
+            "type_line": card.type_line,
+            "oracle_text": card.oracle_text,
+            "colors": list(card.colors or []),
+            "color_identity": list(card.color_identity or []),
+            "power": card.power,
+            "toughness": card.toughness,
+            "rarity": card.rarity,
+            "image_uri": card.image_uri,
+            "scryfall_uri": card.scryfall_uri,
+            "is_game_changer": card.name in GAME_CHANGERS,
+            "functions": functions,
+            "archetype_scores": archetype_scores,
+            "bracket_scores": bracket_scores,
+            "edhrec_decks": edhrec.num_decks if edhrec else None,
+            "combos": combos,
+            "combo_count": len(combos),
+        }
+
+    return out
 
 
 @app.get("/api/search/commanders")

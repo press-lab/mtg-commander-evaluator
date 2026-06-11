@@ -88,6 +88,7 @@ def normalize_all(session: Session, run_id: str | None = None) -> int:
                     "scryfall_uri",
                     "image_uri",
                     "oracle_text_checksum",
+                    "price_usd",
                     "updated_at",
                 ]
             },
@@ -200,6 +201,13 @@ def _build_card(
         face_uris = card_json["card_faces"][0].get("image_uris", {})
         image_uri = face_uris.get("normal") or face_uris.get("large")
 
+    prices = card_json.get("prices") or {}
+    price_raw = prices.get("usd") or prices.get("usd_foil")
+    try:
+        price_usd = round(float(price_raw), 2) if price_raw else None
+    except (TypeError, ValueError):
+        price_usd = None
+
     tl_lower = type_line.lower()
     return {
         "oracle_id": oracle_id,
@@ -226,6 +234,7 @@ def _build_card(
         "scryfall_uri": card_json.get("scryfall_uri", ""),
         "image_uri": image_uri,
         "oracle_text_checksum": checksum,
+        "price_usd": price_usd,
         "first_seen_at": first_seen or now,
         "updated_at": now,
     }

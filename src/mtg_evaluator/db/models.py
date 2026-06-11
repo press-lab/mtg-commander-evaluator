@@ -123,6 +123,7 @@ class Card(Base):
     scryfall_uri: Mapped[str] = mapped_column(Text, nullable=False)
     image_uri: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     oracle_text_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    price_usd: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -543,7 +544,52 @@ class EDHRecCardStats(Base):
     card_name: Mapped[str] = mapped_column(Text, nullable=False)
     num_decks: Mapped[int] = mapped_column(Integer, nullable=False)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    salt_score: Mapped[Optional[float]] = mapped_column(Numeric(4, 2), nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class EDHRecCommanderStats(Base):
+    """
+    Per-commander card inclusion data from an EDHREC commander page.
+    Lazily fetched per commander (like commander_profiles) and refreshed
+    when stale. synergy = inclusion rate in this commander's decks minus
+    inclusion in other decks of the same color identity; can be negative.
+    """
+
+    __tablename__ = "edhrec_commander_stats"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    commander_oracle_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("cards.oracle_id"),
+        nullable=False,
+        index=True,
+    )
+    card_name: Mapped[str] = mapped_column(Text, nullable=False)
+    card_oracle_id: Mapped[Optional[str]] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("cards.oracle_id"),
+        nullable=True,
+        index=True,
+    )
+    num_decks: Mapped[int] = mapped_column(Integer, nullable=False)
+    potential_decks: Mapped[int] = mapped_column(Integer, nullable=False)
+    inclusion_rate: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
+    synergy: Mapped[Optional[float]] = mapped_column(Numeric(6, 4), nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "commander_oracle_id",
+            "card_name",
+            name="uq_edhrec_commander_stats_commander_card",
+        ),
+    )
 
 
 class DeckEvaluation(Base):
