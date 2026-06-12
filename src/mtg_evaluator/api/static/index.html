@@ -758,7 +758,7 @@
         </div>
 
         <!-- Archetype -->
-        <div class="mb-4" x-show="buildForm.commanderName">
+        <div class="mb-4">
           <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Archetype</label>
           <select x-model="buildForm.archetype" class="w-full px-3 py-2 rounded-lg border text-sm">
             <option value="">Auto-detect</option>
@@ -1562,6 +1562,53 @@
           <option value="2">2-color</option>
           <option value="3">3-color</option>
         </select>
+      </div>
+    </div>
+
+    <!-- Bracket + Build Style + Salt — shared with Build tab so clicking a commander carries everything over -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Bracket</label>
+        <div class="flex gap-1">
+          <template x-for="b in [1,2,3,4,5]" :key="b">
+            <button class="flex-1 py-1.5 rounded text-xs font-bold border transition-all"
+              :class="buildForm.bracket === b
+                ? `bracket-${b} border-transparent`
+                : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'"
+              @click="buildForm.bracket = b"
+              x-text="b"
+            ></button>
+          </template>
+        </div>
+        <div class="text-xs text-slate-500 mt-1" x-text="bracketName(buildForm.bracket)"></div>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Build Style</label>
+        <div class="flex gap-1">
+          <template x-for="s in [{v:'optimized',label:'⚙️'},{v:'balanced',label:'⚖️'},{v:'spicy',label:'🌶️'}]" :key="s.v">
+            <button class="flex-1 py-1.5 rounded text-xs font-semibold border transition-all"
+              :class="buildForm.buildStyle === s.v
+                ? 'bg-indigo-700 border-indigo-500 text-white'
+                : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'"
+              @click="buildForm.buildStyle = s.v"
+              x-text="s.label + ' ' + s.v"
+            ></button>
+          </template>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Salt Tolerance</label>
+        <div class="flex gap-1">
+          <template x-for="s in ['any','low','medium','high']" :key="s">
+            <button class="flex-1 py-1.5 rounded text-xs font-semibold border transition-all"
+              :class="buildForm.saltTolerance === s
+                ? 'bg-amber-700 border-amber-500 text-white'
+                : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'"
+              @click="buildForm.saltTolerance = s"
+              x-text="s"
+            ></button>
+          </template>
+        </div>
       </div>
     </div>
 
