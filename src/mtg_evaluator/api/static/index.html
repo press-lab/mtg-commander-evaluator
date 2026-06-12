@@ -227,6 +227,38 @@
           />
         </div>
 
+        <div class="mb-4 relative">
+          <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Commander</label>
+          <input
+            type="text"
+            x-model="evalForm.commanderQuery"
+            @input.debounce.250ms="searchEvalCommanders()"
+            @focus="showEvalCommanderDropdown = true"
+            @blur="setTimeout(() => showEvalCommanderDropdown = false, 150)"
+            placeholder="Search commander name…"
+            autocomplete="off"
+            class="w-full px-3 py-2 rounded-lg border text-sm"
+          />
+          <ul
+            x-show="showEvalCommanderDropdown && evalCommanderSuggestions.length > 0"
+            class="absolute z-20 w-full mt-1 rounded-lg border border-slate-600 bg-slate-800 shadow-xl max-h-48 overflow-y-auto"
+          >
+            <template x-for="c in evalCommanderSuggestions" :key="c.oracle_id">
+              <li
+                class="px-3 py-2 text-sm text-slate-200 cursor-pointer hover:bg-slate-700"
+                @mousedown.prevent="evalForm.commanderName = c.name; evalForm.commanderQuery = c.name; showEvalCommanderDropdown = false"
+              >
+                <div class="font-medium" x-text="c.name"></div>
+                <div class="text-xs text-slate-500" x-text="c.type_line"></div>
+              </li>
+            </template>
+          </ul>
+          <div x-show="evalForm.commanderName" class="mt-1 text-xs text-indigo-400">
+            Commander: <span class="font-semibold" x-text="evalForm.commanderName"></span>
+            <button class="ml-2 text-slate-500 hover:text-slate-300" @click="evalForm.commanderName=''; evalForm.commanderQuery=''">✕</button>
+          </div>
+        </div>
+
         <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Decklist</label>
         <textarea
           x-model="evalForm.decklist"
@@ -1654,12 +1686,13 @@
     <div x-show="cmdResults.length > 0 && !cmdLoading" class="grid grid-cols-1 md:grid-cols-2 gap-3">
       <template x-for="cmd in cmdResults" :key="cmd.oracle_id">
         <div
-          class="rounded-xl border border-slate-700 bg-slate-900/60 p-4 cursor-pointer hover:border-indigo-600 transition-colors"
+          class="rounded-xl border border-slate-700 bg-slate-900/60 overflow-hidden cursor-pointer hover:border-indigo-600 transition-colors"
           @click="goToBuild(cmd)"
         >
-          <div x-show="cmd.image_uri" class="-mx-4 -mt-4 mb-3 overflow-hidden rounded-t-xl" style="height:140px">
+          <div x-show="cmd.image_uri" style="height:140px">
             <img :src="cmd.image_uri" alt="" class="w-full h-full object-cover object-top" />
           </div>
+          <div class="p-4">
           <div class="flex items-start justify-between gap-2">
             <div>
               <div class="font-semibold text-slate-100 text-sm" x-text="cmd.name"></div>
@@ -1690,6 +1723,7 @@
             <div x-show="cmd.partner_label" class="card-pill text-purple-300" x-text="cmd.partner_label"></div>
           </div>
           <div class="mt-1 text-xs text-indigo-500">Click to build →</div>
+          </div><!-- /p-4 -->
         </div>
       </template>
     </div>
@@ -1711,7 +1745,9 @@ function app() {
     showUnclassified: false,
 
     // ---- Evaluate ----
-    evalForm: { decklist: '', deckName: 'My Deck' },
+    evalForm: { decklist: '', deckName: 'My Deck', commanderName: '', commanderQuery: '' },
+    evalCommanderSuggestions: [],
+    showEvalCommanderDropdown: false,
     evalResult: null,
     evalLoading: false,
     evalError: null,
@@ -1721,16 +1757,28 @@ function app() {
       if (r.ok) this.allArchetypes = (await r.json()).archetypes || [];
     },
 
+    async searchEvalCommanders() {
+      const q = this.evalForm.commanderQuery;
+      if (q.length < 2) { this.evalCommanderSuggestions = []; return; }
+      const resp = await fetch(`/api/search/commanders?q=${encodeURIComponent(q)}&limit=6`);
+      if (resp.ok) this.evalCommanderSuggestions = await resp.json();
+    },
+
     async runEvaluate() {
       this.evalLoading = true;
       this.evalError = null;
       this.evalResult = null;
       try {
+        let decklist = this.evalForm.decklist;
+        // Inject commander line if user specified one and it's not already marked
+        if (this.evalForm.commanderName && !decklist.includes('*CMDR*')) {
+          decklist = `1 ${this.evalForm.commanderName} *CMDR*\n` + decklist;
+        }
         const resp = await fetch('/api/evaluate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            decklist: this.evalForm.decklist,
+            decklist,
             deck_name: this.evalForm.deckName || 'My Deck',
           }),
         });
