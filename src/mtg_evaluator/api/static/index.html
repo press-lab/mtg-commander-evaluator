@@ -652,6 +652,11 @@
           <div x-show="buildForm.commanderName" class="mt-1 text-xs text-indigo-400">
             Selected: <span class="font-semibold" x-text="buildForm.commanderName"></span>
           </div>
+          <div x-show="buildForm.commanderImageUri" class="mt-3">
+            <img :src="buildForm.commanderImageUri" alt=""
+              class="w-full rounded-2xl object-cover object-top shadow-lg"
+              style="max-height:220px" />
+          </div>
         </div>
 
         <!-- ── PARTNER SECTION ── -->
@@ -1493,7 +1498,11 @@
       <div class="space-y-0.5">
         <template x-for="card in browseResults" :key="card.oracle_id">
           <div class="card-row flex items-center gap-3 px-3 py-2.5 rounded-lg">
-            <div class="w-10 text-center text-xs font-bold text-indigo-400" x-text="card.score.toFixed(0)"></div>
+            <div x-show="card.image_uri" class="flex-shrink-0 w-10 h-10 rounded overflow-hidden">
+              <img :src="card.image_uri ? card.image_uri.replace('/normal/', '/art_crop/') : ''"
+                alt="" class="w-full h-full object-cover object-top" />
+            </div>
+            <div x-show="!card.image_uri" class="w-10 text-center text-xs font-bold text-indigo-400" x-text="card.score.toFixed(0)"></div>
             <div class="flex-1 min-w-0">
               <div class="text-sm text-slate-200 truncate">
                 <span x-text="card.name"></span>
@@ -1648,6 +1657,9 @@
           class="rounded-xl border border-slate-700 bg-slate-900/60 p-4 cursor-pointer hover:border-indigo-600 transition-colors"
           @click="goToBuild(cmd)"
         >
+          <div x-show="cmd.image_uri" class="-mx-4 -mt-4 mb-3 overflow-hidden rounded-t-xl" style="height:140px">
+            <img :src="cmd.image_uri" alt="" class="w-full h-full object-cover object-top" />
+          </div>
           <div class="flex items-start justify-between gap-2">
             <div>
               <div class="font-semibold text-slate-100 text-sm" x-text="cmd.name"></div>
@@ -1740,6 +1752,7 @@ function app() {
       commanderQuery: '',
       commanderName: '',
       commanderOracleId: '',
+      commanderImageUri: '',
       partnerName: '',
       useSolo: false,           // true = explicitly solo even if partner available
       bracket: 3,
@@ -1784,6 +1797,7 @@ function app() {
       this.buildForm.commanderName = c.name;
       this.buildForm.commanderOracleId = c.oracle_id;
       this.buildForm.commanderQuery = c.name;
+      this.buildForm.commanderImageUri = c.image_uri || '';
       this.buildForm.partnerName = '';
       this.buildForm.useSolo = false;
       this.showCommanderDropdown = false;

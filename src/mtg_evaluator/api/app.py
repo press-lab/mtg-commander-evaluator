@@ -552,6 +552,7 @@ async def commanders(
                     "type_line": c.type_line,
                     "partner_label": partner_info.label if partner_info else None,
                     "partner_type": partner_info.partner_type if partner_info else None,
+                    "image_uri": card.image_uri if card else None,
                 }
             )
 
@@ -568,6 +569,9 @@ async def browse(
 ):
     from mtg_evaluator.deckbuilding.browse import browse_cards
 
+    from sqlalchemy import select
+    from mtg_evaluator.db.models import Card
+
     color_list = [c.strip() for c in colors.split(",")] if colors else None
     with get_session() as session:
         results = browse_cards(
@@ -578,6 +582,13 @@ async def browse(
             colors=color_list,
             limit=limit,
         )
+        oracle_ids = [c.oracle_id for c in results]
+        image_uris = {
+            row.oracle_id: row.image_uri
+            for row in session.execute(
+                select(Card.oracle_id, Card.image_uri).where(Card.oracle_id.in_(oracle_ids))
+            ).all()
+        }
 
     return [
         {
@@ -590,6 +601,7 @@ async def browse(
             "is_game_changer": c.is_game_changer,
             "edhrec_decks": c.edhrec_decks,
             "score": c.score,
+            "image_uri": image_uris.get(c.oracle_id),
         }
         for c in results
     ]
@@ -727,7 +739,7 @@ async def search_commanders(q: str = Query(..., min_length=2), limit: int = 10):
 
     with get_session() as session:
         rows = session.execute(
-            select(Card.name, Card.oracle_id, Card.color_identity, Card.type_line)
+            select(Card.name, Card.oracle_id, Card.color_identity, Card.type_line, Card.image_uri)
             .where(Card.is_legendary == True)  # noqa: E712
             .where(func.lower(Card.name).contains(q.lower()))
             .limit(limit)
@@ -739,6 +751,7 @@ async def search_commanders(q: str = Query(..., min_length=2), limit: int = 10):
             "oracle_id": r.oracle_id,
             "color_identity": r.color_identity,
             "type_line": r.type_line,
+            "image_uri": r.image_uri,
         }
         for r in rows
     ]
