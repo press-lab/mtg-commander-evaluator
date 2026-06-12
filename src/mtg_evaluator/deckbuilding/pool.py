@@ -39,6 +39,7 @@ from mtg_evaluator.db.models import (
     SpellbookCombo,
     SpellbookComboCard,
 )
+from mtg_evaluator.banned import is_banned
 from mtg_evaluator.evaluation.game_changers import GAME_CHANGERS
 from mtg_evaluator.deckbuilding.request import DeckRequest, SALT_THRESHOLDS
 from mtg_evaluator.deckbuilding.archetypes import normalize_archetype
@@ -256,6 +257,33 @@ def _package_bonus(
     return 0.0
 
 
+def _land_with_affinity(
+    base: float,
+    arch_score: Optional[float],
+    cmd_inclusion: Optional[float],
+    cmd_synergy: Optional[float],
+    build_style: str,
+) -> float:
+    """
+    Lands are NOT theme-blind. A static tier list makes every deck's mana
+    base converge on the same fetch/dual pile — but in a lands-matter deck,
+    Fabled Passage (87% inclusion on the commander's page) is engine, not
+    fixing, and must be able to outrank a generic dual.
+
+      archetype fit  — classified synergy lands (Field of the Dead,
+                       Glacial Chasm) get up to +20
+      commander page — inclusion/synergy pull, style-weighted like nonlands.
+                       Spicy uses the balanced weights: mana bases should
+                       never get spicier at the cost of function.
+    """
+    bonus = ((arch_score or 0) / 5.0) * 20
+    if build_style == "optimized":
+        bonus += (cmd_inclusion or 0.0) * 30 + max(0.0, cmd_synergy or 0.0) * 25
+    else:
+        bonus += (cmd_inclusion or 0.0) * 15 + max(0.0, cmd_synergy or 0.0) * 12
+    return round(min(100.0, base + bonus), 2)
+
+
 def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     """
     Main entry point. Phase 5: commander-aware, role-quality scoring.
@@ -454,6 +482,10 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     all_scored: list[PoolCard] = []
 
     for row in rows:
+        # Banned in Commander — never legal at any bracket
+        if is_banned(row.name):
+            continue
+
         # Color identity filter
         card_colors = set(row.color_identity or [])
         if card_colors and not card_colors.issubset(deck_colors_set):
@@ -547,9 +579,10 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             if is_tutor:
                 score = round(score * tutor_multiplier, 2)
 
-        # Per-commander EDHREC affinity (non-lands only — lands keep their
-        # tier-based scores). How strongly consensus pulls depends on the
-        # requested build style:
+        # Per-commander EDHREC affinity. Lands get archetype fit + a
+        # style-weighted page pull on top of their tier (see
+        # _land_with_affinity). For nonlands, how strongly consensus pulls
+        # depends on the requested build style:
         #   optimized — converge on the meta build (heavy inclusion/synergy pull)
         #   balanced  — moderate signal
         #   spicy     — consensus is a *penalty*; underplayed cards that still
@@ -559,7 +592,11 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         )
         cmd_inclusion = cmd_stat["inclusion_rate"] if cmd_stat else None
         cmd_synergy = cmd_stat.get("synergy") if cmd_stat else None
-        if not is_land:
+        if is_land:
+            score = _land_with_affinity(
+                score, row.arch_score, cmd_inclusion, cmd_synergy, request.build_style
+            )
+        else:
             style = request.build_style
             if cmd_stat and style == "optimized":
                 # Consensus must dominate: a 60%+ inclusion staple should
@@ -568,6 +605,19 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
                     0.0, cmd_synergy or 0.0
                 ) * 25
                 score = round(min(100.0, score + affinity), 2)
+                # Consensus floor: optimized means "converge on the proven
+                # meta build". Commanders whose real theme isn't a canonical
+                # archetype (zombies, angels, ninjas, proliferate) score
+                # their signature cards low on archetype fit — an additive
+                # bonus can't stop generic goodstuff from drowning an
+                # 80%-inclusion staple. The floor makes inclusion decisive:
+                # 40% -> 73, 60% -> 82, 80% -> 91. Exception: cards the
+                # user explicitly de-emphasized (tutor density "none")
+                # keep their down-weighted score.
+                if not (is_tutor and tutor_multiplier < 1.0):
+                    score = round(
+                        max(score, 55 + (cmd_inclusion or 0.0) * 45), 2
+                    )
             elif cmd_stat and style == "balanced":
                 affinity = (cmd_inclusion or 0.0) * 8 + max(
                     0.0, cmd_synergy or 0.0
@@ -655,6 +705,8 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     for row in extra_land_rows:
         if row.oracle_id in seen_oracle_ids:
             continue
+        if is_banned(row.name):
+            continue
         card_colors = set(row.color_identity or [])
         if card_colors and not card_colors.issubset(deck_colors_set):
             continue
@@ -675,6 +727,13 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         if ls is None:
             continue  # bracket-restricted land (e.g. Ancient Tomb below B3)
         cmd_stat = cmd_stats.get(row.name)
+        ls = _land_with_affinity(
+            ls,
+            None,
+            cmd_stat["inclusion_rate"] if cmd_stat else None,
+            cmd_stat.get("synergy") if cmd_stat else None,
+            request.build_style,
+        )
         seen_oracle_ids.add(row.oracle_id)
         all_scored.append(
             PoolCard(
@@ -743,6 +802,16 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             request.build_style == "optimized"
             and (card.commander_inclusion or 0) >= 0.4
         ):
+            continue
+        # On-theme payoffs are never saturation-crushed: in a lands deck, a
+        # 5/5 landfall payoff that also draws cards is the deck, not
+        # redundant draw. "On-theme" requires page evidence (15%+ of this
+        # commander's decks play it) — archetype fit alone is too loose:
+        # for generic archetypes like midrange, arch>=4 describes half of
+        # all goodstuff and exempting it crowds out real consensus cards.
+        if (card.archetype_score or 0) >= 4 and (
+            card.commander_inclusion or 0
+        ) >= 0.15:
             continue
         role_scores = {
             role: quality

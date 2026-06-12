@@ -166,6 +166,11 @@ def build_skeleton(pool: CardPool) -> SkeletonDeck:
     # --- 1. Lands: best nonbasics, then deficit-driven basics ---
     # Keep at least a few basic slots for color stability and budget sanity.
     min_basics = 3 if len(pool.color_identity) >= 3 else 6
+    # Lands decks fetch basics constantly (Splendid Reclamation, Harrow,
+    # Scapeshift all want basic targets) — a greedy all-nonbasic mana base
+    # actively hurts the gameplan.
+    if (getattr(pool, "archetype", None) or "") == "lands":
+        min_basics = max(min_basics, 8)
     nonbasic_cap = max(0, land_target - min_basics)
     for card in land_sorted:
         if len(deck.lands) >= nonbasic_cap:

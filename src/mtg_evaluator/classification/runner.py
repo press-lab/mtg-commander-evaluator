@@ -48,9 +48,20 @@ def queue_jobs_for_names(session: Session, card_names: list[str]) -> int:
     if not card_names:
         return 0
 
-    cards = session.scalars(
-        select(Card).where(Card.name.in_(card_names))
-    ).all()
+    cards = list(
+        session.scalars(select(Card).where(Card.name.in_(card_names))).all()
+    )
+    # EDHREC uses front-face names for double-faced cards; the cards table
+    # stores "Front // Back". Without this, DFC consensus cards never get
+    # classified and the self-learning loop can't close their gap.
+    found_names = {c.name for c in cards}
+    missing = [n for n in card_names if n not in found_names]
+    for name in missing:
+        dfc = session.scalars(
+            select(Card).where(Card.name.like(name + " //%")).limit(1)
+        ).first()
+        if dfc:
+            cards.append(dfc)
     if not cards:
         return 0
 
