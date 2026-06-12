@@ -1533,10 +1533,31 @@
     </p>
 
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-      <div class="md:col-span-2">
+      <div class="md:col-span-2 relative">
         <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Archetype / Theme</label>
-        <input x-model="cmdFilters.archetype" type="text" placeholder="sacrifice, tribal, tokens…"
-          class="w-full px-3 py-2 rounded-lg border text-sm" />
+        <input
+          x-model="cmdFilters.archetype"
+          type="text"
+          placeholder="Search archetypes…"
+          class="w-full px-3 py-2 rounded-lg border text-sm"
+          @focus="showCmdArchetypeDropdown = true"
+          @blur="setTimeout(() => showCmdArchetypeDropdown = false, 150)"
+          @input="showCmdArchetypeDropdown = true"
+          autocomplete="off"
+        />
+        <ul
+          x-show="showCmdArchetypeDropdown && allArchetypes.filter(a => !cmdFilters.archetype || a.toLowerCase().includes(cmdFilters.archetype.toLowerCase())).length"
+          class="absolute z-20 w-full mt-1 rounded-lg border border-slate-600 bg-slate-800 shadow-xl max-h-56 overflow-y-auto"
+        >
+          <template x-for="a in allArchetypes.filter(a => !cmdFilters.archetype || a.toLowerCase().includes(cmdFilters.archetype.toLowerCase()))" :key="a">
+            <li
+              class="px-3 py-2 text-sm text-slate-200 cursor-pointer hover:bg-slate-700"
+              :class="cmdFilters.archetype === a && 'bg-slate-700 text-indigo-300'"
+              @mousedown.prevent="cmdFilters.archetype = a; showCmdArchetypeDropdown = false"
+              x-text="a.replace(/_/g, ' ')"
+            ></li>
+          </template>
+        </ul>
       </div>
       <div>
         <label class="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Colors</label>
@@ -1683,6 +1704,11 @@ function app() {
     evalLoading: false,
     evalError: null,
 
+    async init() {
+      const r = await fetch('/api/archetypes/all');
+      if (r.ok) this.allArchetypes = (await r.json()).archetypes || [];
+    },
+
     async runEvaluate() {
       this.evalLoading = true;
       this.evalError = null;
@@ -1738,6 +1764,8 @@ function app() {
     validPartners: [],            // list of valid partner cards
     partnerSearch: '',
     showCommanderDropdown: false,
+    allArchetypes: [],
+    showCmdArchetypeDropdown: false,
 
     bracketName(b) {
       return ['', 'B1 — Exhibition (casual theme)', 'B2 — Core (precon level)',
