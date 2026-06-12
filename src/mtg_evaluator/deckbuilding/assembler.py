@@ -1,23 +1,16 @@
 """
-LLM-based deck assembler.
+Deck assembler: deterministic skeleton + bounded LLM refinement.
 
-Takes a scored CardPool (~200 candidates) and uses DeepSeek to select
-exactly 99 cards (commander slot is the 100th), organized into a complete
-Commander deck with mana curve awareness, role balance, and synergy reasoning.
+The deck is SOLVED deterministically first (skeleton.py): every role target
+filled with the highest-scoring available cards, basics allocated by Karsten
+color math, combos included as units. The LLM then reviews the baseline and
+may propose a bounded number of swaps (each with a stated reason) from a list
+of named alternatives. Invalid swaps are rejected; if the LLM is unavailable
+the skeleton ships as-is.
 
-Token budget: ~2,500-3,500 input, ~800-1,000 output per call.
-
-The LLM receives:
-  - Commander(s), archetype, bracket, color identity
-  - Dynamic role targets (lands/ramp/draw/removal/package support)
-  - Top ~120 candidates with tier, functions, score
-  - Any known combos
-
-It returns a structured tool call with cards grouped by role, plus
-a 3-5 sentence explanation of the key choices.
-
-Lands are handled separately: we pre-select the best available lands
-from the pool, then the LLM fills the remaining 62-65 nonland slots.
+This keeps the LLM as a synergy-judgment layer rather than the engine — a
+weak or hallucinating model can only make small, validated changes, never a
+broken deck.
 """
 
 from __future__ import annotations
@@ -46,81 +39,62 @@ from mtg_evaluator.deckbuilding.packages import (
     detect_nonbos,
 )
 from mtg_evaluator.deckbuilding.role_targets import RoleTargets
+from mtg_evaluator.deckbuilding.skeleton import BASIC_LAND_NAMES, build_skeleton
+
+_MAX_SWAPS = 12
 
 _SYSTEM_PROMPT = """\
-You are an expert Magic: The Gathering Commander deck builder. Given a scored candidate pool, \
-select exactly the right cards to build a tight, coherent 99-card Commander deck.
+You are an expert Magic: The Gathering Commander deck builder reviewing a deck that was \
+assembled by a deterministic optimizer. The baseline already satisfies role targets, mana \
+math, and the requested bracket/style. Your job is SYNERGY JUDGMENT the optimizer can't see: \
+cards that work especially well (or badly) with the commander's specific text, curve clumps, \
+tribal/typal lines, and combo support.
 
-GUIDELINES:
-- Use the role targets provided in the request; they are commander-, bracket-, and archetype-aware.
-- Keep the mana curve coherent for the bracket and commander. The rest fills the archetype gameplan.
-- Prefer cards that do double duty (ramp + on-theme, draw + synergy).
-- Avoid redundancy: if you already have Demonic Tutor, you may not need Vampiric Tutor unless \
-  tutors ARE the strategy.
-- Respect bracket: at B1-B2 avoid fast mana and one-sided effects; at B4-B5 prioritize consistency.
-- Include combo pieces together if a combo fits the deck.
-- CRITICAL: Return EXACTLY the number of cards requested across all categories. Every card name \
-  must be taken verbatim from the candidate pool list provided. Do not invent cards.
+RULES:
+- Propose between 0 and {max_swaps} swaps. Zero swaps is a valid answer if the baseline is good.
+- Each swap removes one baseline card and adds one card from the ALTERNATIVES list (verbatim names).
+- Never swap away basic lands, combo pieces, or the cheapest ramp.
+- A swap must keep the deck's role balance intact: if you remove a draw spell, the added card \
+  should also draw (or the deck must already exceed its draw target).
+- Each swap needs a concrete reason referencing the commander or gameplan — not "this card is good".
 
-Return ONLY the assemble_deck tool call.\
+Return ONLY the refine_deck tool call.\
 """
 
 _TOOL_SCHEMA = {
-    "name": "assemble_deck",
-    "description": "Select the final cards for a Commander deck from the provided candidate pool",
+    "name": "refine_deck",
+    "description": "Propose bounded swaps to refine a deterministically assembled Commander deck",
     "input_schema": {
         "type": "object",
         "properties": {
-            "lands": {
+            "swaps": {
                 "type": "array",
-                "items": {"type": "string"},
-                "description": "Land cards (nonbasic + basics). Target 36-38 total. Only cards from the pool.",
-            },
-            "ramp": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Ramp / mana acceleration. Target 10-12 cards.",
-            },
-            "draw": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Card draw / advantage. Target 8-10 cards.",
-            },
-            "removal": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Single-target removal + board wipes. Target 6-8 cards.",
-            },
-            "synergy": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Core archetype / synergy pieces — the heart of the gameplan.",
-            },
-            "combo": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Combo pieces (may be empty). Only include if combos are wanted.",
-            },
-            "other": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Remaining cards that round out the deck.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "remove": {
+                            "type": "string",
+                            "description": "Exact name of a baseline card to remove",
+                        },
+                        "add": {
+                            "type": "string",
+                            "description": "Exact name of an ALTERNATIVES card to add",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Concrete synergy reason for this swap",
+                        },
+                    },
+                    "required": ["remove", "add", "reason"],
+                },
+                "description": "0 to 12 swaps against the baseline deck",
             },
             "reasoning": {
                 "type": "string",
-                "description": "3-5 sentences. Explain the deck's gameplan, key synergies, and why specific high-impact cards were included or excluded.",
+                "description": "2-4 sentences: overall assessment of the baseline and the theme of your changes (or why none were needed).",
             },
         },
-        "required": [
-            "lands",
-            "ramp",
-            "draw",
-            "removal",
-            "synergy",
-            "combo",
-            "other",
-            "reasoning",
-        ],
+        "required": ["swaps", "reasoning"],
     },
 }
 
@@ -169,6 +143,10 @@ class AssembledDeck:
     package_health: PackageHealth | None = None
     nonbo_warnings: list[NonboWarning] = field(default_factory=list)
     repair_notes: list[str] = field(default_factory=list)
+    # Per-card rationale from the deterministic solver + LLM swap reasons
+    card_rationale: dict[str, str] = field(default_factory=dict)
+    # Swaps the LLM made against the deterministic baseline
+    llm_swaps: list[dict] = field(default_factory=list)
 
     @property
     def all_cards(self) -> list[str]:
@@ -207,8 +185,12 @@ class AssembledDeck:
         for label, cards in sections:
             if cards:
                 lines.append(f"// ── {label} ({len(cards)}) ──")
+                # Aggregate duplicates (multiple basics) into one quantity line
+                counts: dict[str, int] = {}
                 for card in cards:
-                    lines.append(f"1 {card}")
+                    counts[card] = counts.get(card, 0) + 1
+                for card, qty in counts.items():
+                    lines.append(f"{qty} {card}")
                 lines.append("")
 
         lines.append(f"// {self.total} cards total")
@@ -243,11 +225,11 @@ def validate_assembled_deck(
             "The AI may have under- or over-selected."
         )
 
-    # 2. Duplicate detection across all categories
+    # 2. Duplicate detection across all categories (basics may repeat freely)
     seen: set[str] = set()
     dupes: set[str] = set()
     for name in deck.all_cards:
-        if name in seen:
+        if name in seen and name not in BASIC_LAND_NAMES:
             dupes.add(name)
         seen.add(name)
     if dupes:
@@ -312,46 +294,62 @@ def _category_for_card(card: PoolCard) -> str:
     return "other"
 
 
-def _clean_and_repair(
+def _apply_swaps(
     deck: AssembledDeck,
-    candidates: list[PoolCard],
-    expected_total: int,
+    swaps: list[dict],
+    alternatives_by_name: dict[str, PoolCard],
 ) -> None:
-    """Drop invalid/duplicate names, then backfill with best unused candidates."""
-    candidates_by_name = {card.name: card for card in candidates}
-    selected: set[str] = set()
+    """
+    Apply LLM-proposed swaps against the skeleton baseline. Every swap is
+    validated: the removed card must exist in the deck (and not be a basic
+    land or combo piece), the added card must come from the alternatives
+    list and not already be in the deck. Invalid swaps are skipped with a
+    note — the LLM can never corrupt the deck.
+    """
     notes: list[str] = []
+    applied: list[dict] = []
+    in_deck = set(deck.all_cards)
+    categories = ("lands", "ramp", "draw", "removal", "synergy", "combo", "other")
 
-    for category in ("lands", "ramp", "draw", "removal", "synergy", "combo", "other"):
-        cleaned: list[str] = []
-        for raw_name in getattr(deck, category):
-            name = str(raw_name).strip()
-            if not name:
-                continue
-            if name not in candidates_by_name:
-                notes.append(f"Dropped hallucinated card: {name}")
-                continue
-            if name in selected:
-                notes.append(f"Dropped duplicate card: {name}")
-                continue
-            selected.add(name)
-            cleaned.append(name)
-        setattr(deck, category, cleaned)
+    for swap in swaps[:_MAX_SWAPS]:
+        remove = str(swap.get("remove", "")).strip()
+        add = str(swap.get("add", "")).strip()
+        reason = str(swap.get("reason", "")).strip()
 
-    if deck.total >= expected_total:
-        deck.repair_notes = notes
-        return
-
-    for card in sorted(candidates, key=lambda c: c.score, reverse=True):
-        if deck.total >= expected_total:
-            break
-        if card.name in selected:
+        if not remove or not add:
             continue
-        category = _category_for_card(card)
-        getattr(deck, category).append(card.name)
-        selected.add(card.name)
-        notes.append(f"Repaired missing slot with {card.name} ({category})")
+        if remove in BASIC_LAND_NAMES:
+            notes.append(f"Rejected swap: {remove} is a basic land")
+            continue
+        if remove in deck.combo:
+            notes.append(f"Rejected swap: {remove} is a combo piece")
+            continue
+        if remove not in in_deck:
+            notes.append(f"Rejected swap: {remove} is not in the deck")
+            continue
+        if add in in_deck:
+            notes.append(f"Rejected swap: {add} is already in the deck")
+            continue
+        new_card = alternatives_by_name.get(add)
+        if new_card is None:
+            notes.append(f"Rejected swap: {add} is not in the alternatives list")
+            continue
 
+        # Remove from whichever category holds it
+        for category in categories:
+            cards = getattr(deck, category)
+            if remove in cards:
+                cards.remove(remove)
+                break
+        in_deck.discard(remove)
+
+        target_category = _category_for_card(new_card)
+        getattr(deck, target_category).append(add)
+        in_deck.add(add)
+        deck.card_rationale[add] = f"LLM swap for {remove}: {reason}"
+        applied.append({"remove": remove, "add": add, "reason": reason})
+
+    deck.llm_swaps = applied
     deck.repair_notes = notes
 
 
@@ -369,7 +367,8 @@ def _analyze_assembled_deck(deck: AssembledDeck, pool: CardPool) -> None:
         flat_functions.extend(functions)
         card_functions[card.name] = functions
 
-    land_names = [name for name in deck.lands if name in cards_by_name]
+    # All lands count — basics aren't pool cards but mana analysis knows them
+    land_names = list(deck.lands)
     land_metadata = {
         card.name: LandManaData(
             produced_mana=tuple(card.produced_mana),
@@ -449,115 +448,179 @@ def _analyze_assembled_deck(deck: AssembledDeck, pool: CardPool) -> None:
 
 def assemble_deck(pool: CardPool, bracket: int = 3) -> AssembledDeck:
     """
-    Call DeepSeek to select the final deck from the scored pool.
+    Solve the deck deterministically (skeleton), then let the LLM propose
+    bounded, validated swaps for synergy judgment. If the LLM is unavailable
+    or returns garbage, the deterministic skeleton ships unchanged.
+
     With a solo commander: 99 cards. With a partner pair: 98 cards.
-    Returns an AssembledDeck with cards grouped by role.
     """
     has_partner = " + " in pool.commander_name
-    deck_size = 98 if has_partner else 99
     targets = (
         pool.role_targets.to_dict()
         if pool.role_targets
         else _VALIDATE_MINIMUMS.get(bracket, _VALIDATE_MINIMUMS[3])
     )
-    total_nonland = deck_size - targets.get("lands", 36)
 
-    # Build candidate list — top 120 by score, show tier + functions
-    all_candidates = pool.core + pool.support + pool.flex
-    all_candidates.sort(key=lambda c: c.score, reverse=True)
-    candidates = all_candidates[:120]
+    # --- 1. Deterministic solve ---
+    skeleton = build_skeleton(pool)
+    deck = AssembledDeck(
+        commander=pool.commander_name,
+        archetype=pool.archetype,
+        bracket=bracket,
+        has_partner=has_partner,
+        lands=list(skeleton.lands),
+        ramp=list(skeleton.ramp),
+        draw=list(skeleton.draw),
+        removal=list(skeleton.removal),
+        synergy=list(skeleton.synergy),
+        combo=list(skeleton.combo),
+        other=list(skeleton.other),
+        card_rationale=dict(skeleton.rationale),
+    )
 
-    # Separate land candidates (for transparency in prompt)
-    land_candidates = [c for c in candidates if "land" in c.type_line.lower()]
-    nonland_candidates = [c for c in candidates if "land" not in c.type_line.lower()]
+    # --- 2. Alternatives: best pool cards NOT in the baseline ---
+    in_deck = set(deck.all_cards)
+    unpicked = [c for c in pool.all_cards if c.name not in in_deck]
+    unpicked.sort(key=lambda c: c.score, reverse=True)
+    alt_nonland = [c for c in unpicked if "land" not in c.type_line.lower()][:50]
+    alt_land = [c for c in unpicked if "land" in c.type_line.lower()][:10]
+    alternatives = alt_nonland + alt_land
+    alternatives_by_name = {c.name: c for c in alternatives}
+
+    # --- 3. LLM refinement (bounded swaps) ---
+    try:
+        deck.reasoning = _llm_refine(pool, deck, alternatives, targets, bracket)
+    except Exception as exc:  # LLM down/misbehaving → deterministic build ships
+        deck.reasoning = (
+            "Deterministic build — every role target filled with the "
+            "highest-scoring available cards. (LLM refinement unavailable: "
+            f"{type(exc).__name__})"
+        )
+
+    _analyze_assembled_deck(deck, pool)
+    return deck
+
+
+def _llm_refine(
+    pool: CardPool,
+    deck: AssembledDeck,
+    alternatives: list[PoolCard],
+    targets: dict,
+    bracket: int,
+) -> str:
+    """One LLM call: review the baseline, return validated swaps + reasoning."""
 
     def _fmt_card(c: PoolCard) -> str:
         fns = ",".join(c.functions[:3]) if c.functions else "—"
         gc = " [GC]" if c.is_game_changer else ""
         combo = " [COMBO]" if c.combo_ids else ""
-        return f"  {c.name}{gc}{combo} | {c.tier} | {fns} | score={c.score:.0f}"
-
-    land_section = (
-        "\n".join(_fmt_card(c) for c in land_candidates[:40]) or "  (no lands in pool)"
-    )
-    nonland_section = "\n".join(_fmt_card(c) for c in nonland_candidates[:100])
-
-    # Combo summary
-    combo_lines = []
-    for combo in pool.combos[:8]:
-        combo_lines.append(
-            f"  [{combo.bracket_tag}] {' + '.join(combo.card_names)}"
-            + (f" → {combo.results_description}" if combo.results_description else "")
+        syn = (
+            f" syn={c.commander_synergy:+.2f}"
+            if c.commander_synergy is not None
+            else ""
         )
-    combo_section = (
-        ("\nKnown combos in pool:\n" + "\n".join(combo_lines)) if combo_lines else ""
+        return f"  {c.name}{gc}{combo} | {fns} | score={c.score:.0f}{syn}"
+
+    cards_by_name = {c.name: c for c in pool.all_cards}
+
+    def _baseline_section(label: str, names: list[str]) -> str:
+        if not names:
+            return ""
+        counts: dict[str, int] = {}
+        for n in names:
+            counts[n] = counts.get(n, 0) + 1
+        lines = []
+        for n, qty in counts.items():
+            prefix = f"{qty}x " if qty > 1 else ""
+            card = cards_by_name.get(n)
+            fns = ",".join(card.functions[:2]) if card and card.functions else ""
+            lines.append(f"  {prefix}{n}" + (f" ({fns})" if fns else ""))
+        return f"{label} ({len(names)}):\n" + "\n".join(lines)
+
+    baseline = "\n".join(
+        section
+        for section in (
+            _baseline_section("LANDS", deck.lands),
+            _baseline_section("RAMP", deck.ramp),
+            _baseline_section("DRAW", deck.draw),
+            _baseline_section("REMOVAL", deck.removal),
+            _baseline_section("SYNERGY", deck.synergy),
+            _baseline_section("COMBO", deck.combo),
+            _baseline_section("OTHER", deck.other),
+        )
+        if section
     )
+
+    combo_lines = [
+        f"  [{combo.bracket_tag}] {' + '.join(combo.card_names)}"
+        + (f" → {combo.results_description}" if combo.results_description else "")
+        for combo in pool.combos[:6]
+    ]
+    combo_section = (
+        ("\nKnown combos:\n" + "\n".join(combo_lines)) if combo_lines else ""
+    )
+
+    profile_section = ""
+    if pool.commander_profile and pool.commander_profile.confidence > 0:
+        p = pool.commander_profile
+        profile_section = (
+            f"\nCommander profile: provides [{', '.join(p.provides_list) or 'nothing'}]; "
+            f"needs [{', '.join(p.needs_list) or 'nothing specific'}]; "
+            f"dependency {p.dependency_score:.0f}/5"
+        )
+
+    style = pool.request.build_style
+    style_note = {
+        "optimized": "Style: OPTIMIZED — converge on proven meta picks; only swap toward higher-synergy staples.",
+        "balanced": "Style: BALANCED — quality first; swaps should improve commander-specific synergy.",
+        "spicy": "Style: SPICY — the user wants underplayed cards; do NOT swap toward popular staples.",
+    }.get(style, "")
 
     role_target_line = (
-        f"Role targets: {targets.get('lands', 36)} lands, {targets.get('ramp', 10)} ramp, "
-        f"{targets.get('draw', 8)} draw, {targets.get('removal', 6)} removal, "
-        f"{targets.get('board_wipe', 2)} board wipes, "
-        f"{targets.get('protection', 2)} protection, "
-        f"{targets.get('finisher', 3)} finishers, "
-        f"~{total_nonland} total nonland"
+        f"Role targets (already satisfied): {targets.get('lands', 36)} lands, "
+        f"{targets.get('ramp', 10)} ramp, {targets.get('draw', 8)} draw, "
+        f"{targets.get('removal', 6)} removal, {targets.get('board_wipe', 2)} wipes, "
+        f"{targets.get('protection', 2)} protection, {targets.get('finisher', 3)} finishers"
     )
-    want_combos = "YES — include combo pieces" if pool.combos else "No combos requested"
 
     user_msg = f"""Commander: {pool.commander_name}
 Archetype: {pool.archetype or "general goodstuff"}
 Colors: {", ".join(pool.color_identity) or "Colorless"}
 Bracket: {_BRACKET_DESC.get(bracket, f"B{bracket}")}
-{role_target_line}
-Combos: {want_combos}
-{combo_section}
+{style_note}
+{role_target_line}{profile_section}{combo_section}
 
-CANDIDATE POOL ({len(candidates)} cards — pick from these only):
+BASELINE DECK ({deck.total} cards, deterministically optimized):
+{baseline}
 
-LANDS ({len(land_candidates)} available):
-{land_section}
+ALTERNATIVES (you may only add from this list):
+{chr(10).join(_fmt_card(c) for c in alternatives)}
 
-NONLANDS ({len(nonland_candidates)} available):
-{nonland_section}
-
-Select exactly {deck_size} cards total across all categories. Card names must match exactly."""
+Review the baseline for commander-specific synergy. Propose 0-{_MAX_SWAPS} swaps."""
 
     client = anthropic.Anthropic(
         api_key=settings.deepseek_api_key,
         base_url=settings.deepseek_anthropic_base_url,
     )
-
     kwargs: dict = dict(
         model=settings.deepseek_model,
-        max_tokens=2048,
-        system=_SYSTEM_PROMPT,
+        max_tokens=1536,
+        system=_SYSTEM_PROMPT.format(max_swaps=_MAX_SWAPS),
         tools=[_TOOL_SCHEMA],
-        tool_choice={"type": "tool", "name": "assemble_deck"},
+        tool_choice={"type": "tool", "name": "refine_deck"},
         messages=[{"role": "user", "content": user_msg}],
     )
     if "deepseek" in settings.deepseek_anthropic_base_url:
         kwargs["thinking"] = {"type": "disabled"}
 
     response = client.messages.create(**kwargs)
-
     tool_use = next(b for b in response.content if b.type == "tool_use")
     inp = tool_use.input
 
-    # Clean hallucinations/duplicates, repair missing slots, then analyze final deck.
-    deck = AssembledDeck(
-        commander=pool.commander_name,
-        archetype=pool.archetype,
-        bracket=bracket,
-        has_partner=has_partner,
-        lands=list(inp.get("lands", []) or []),
-        ramp=list(inp.get("ramp", []) or []),
-        draw=list(inp.get("draw", []) or []),
-        removal=list(inp.get("removal", []) or []),
-        synergy=list(inp.get("synergy", []) or []),
-        combo=list(inp.get("combo", []) or []),
-        other=list(inp.get("other", []) or []),
-        reasoning=inp.get("reasoning", ""),
-    )
-    _clean_and_repair(deck, candidates, deck_size)
-    _analyze_assembled_deck(deck, pool)
+    alternatives_by_name = {c.name: c for c in alternatives}
+    _apply_swaps(deck, list(inp.get("swaps", []) or []), alternatives_by_name)
 
-    return deck
+    reasoning = str(inp.get("reasoning", "")).strip()
+    if deck.llm_swaps:
+        return reasoning or f"Refined the deterministic baseline with {len(deck.llm_swaps)} synergy swaps."
+    return reasoning or "Deterministic baseline confirmed — no swaps needed."

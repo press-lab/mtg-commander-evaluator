@@ -37,6 +37,62 @@ class RunStats:
     skipped: int = 0
 
 
+def queue_jobs_for_names(session: Session, card_names: list[str]) -> int:
+    """
+    Create pending classification jobs for cards (by exact name) that have
+    neither a valid classification nor an open job. Used by the build
+    pipeline's self-learning loop: consensus cards we couldn't consider get
+    queued so the next classify-cards run closes the gap. Returns the number
+    of jobs created.
+    """
+    if not card_names:
+        return 0
+
+    cards = session.scalars(
+        select(Card).where(Card.name.in_(card_names))
+    ).all()
+    if not cards:
+        return 0
+
+    oracle_ids = [c.oracle_id for c in cards]
+    have_valid = set(
+        session.scalars(
+            select(DBClassification.oracle_id)
+            .where(DBClassification.oracle_id.in_(oracle_ids))
+            .where(DBClassification.is_valid == True)  # noqa: E712
+        )
+    )
+    have_open_job = set(
+        session.scalars(
+            select(CardClassificationJob.oracle_id)
+            .where(CardClassificationJob.oracle_id.in_(oracle_ids))
+            .where(
+                CardClassificationJob.status.in_(
+                    [JobStatus.pending, JobStatus.running]
+                )
+            )
+        )
+    )
+
+    now = datetime.utcnow()
+    created = 0
+    for card in cards:
+        if card.oracle_id in have_valid or card.oracle_id in have_open_job:
+            continue
+        session.add(
+            CardClassificationJob(
+                oracle_id=card.oracle_id,
+                status=JobStatus.pending,
+                created_at=now,
+                attempt_count=0,
+                oracle_text_checksum=card.oracle_text_checksum,
+            )
+        )
+        created += 1
+    session.flush()
+    return created
+
+
 def get_classifier() -> BaseClassifier:
     provider = settings.classifier.lower()
     if provider == "deepseek":
@@ -258,8 +314,19 @@ def run_classification(
             .order_by(CardClassificationJob.created_at)
         )
         if edhrec_only:
+            # "EDHREC-relevant" = global top-5000 OR appears on any fetched
+            # per-commander page (the self-learning loop queues those).
+            from mtg_evaluator.db.models import EDHRecCommanderStats
+
             query = query.where(
-                CardClassificationJob.oracle_id.in_(select(EDHRecCardStats.oracle_id))
+                CardClassificationJob.oracle_id.in_(
+                    select(EDHRecCardStats.oracle_id)
+                )
+                | CardClassificationJob.oracle_id.in_(
+                    select(EDHRecCommanderStats.card_oracle_id).where(
+                        EDHRecCommanderStats.card_oracle_id.isnot(None)
+                    )
+                )
             )
         if limit:
             query = query.limit(limit)

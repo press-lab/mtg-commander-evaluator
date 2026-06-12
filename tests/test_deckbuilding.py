@@ -313,31 +313,41 @@ class TestAssemblerRepair:
             cmc=2.0,
         )
 
-    def test_repair_drops_invalid_and_backfills(self):
-        from mtg_evaluator.deckbuilding.assembler import (
-            AssembledDeck,
-            _clean_and_repair,
-        )
+    def test_apply_swaps_validates_every_swap(self):
+        from mtg_evaluator.deckbuilding.assembler import AssembledDeck, _apply_swaps
 
-        candidates = [
-            self._pool_card("Command Tower", "Land", score=90),
-            self._pool_card("Sol Ring", "Artifact", ["ramp"], score=80),
-            self._pool_card("Sign in Blood", "Sorcery", ["draw"], score=70),
-        ]
+        alt = self._pool_card("Sign in Blood", "Sorcery", ["draw"], score=70)
         deck = AssembledDeck(
             commander="Test Commander",
             archetype=None,
             bracket=3,
-            lands=["Command Tower", "Fake Land", "Command Tower"],
+            lands=["Command Tower", "Swamp"],
+            draw=["Read the Bones"],
+            combo=["Exquisite Blood"],
         )
 
-        _clean_and_repair(deck, candidates, expected_total=3)
+        _apply_swaps(
+            deck,
+            swaps=[
+                # Valid swap
+                {"remove": "Read the Bones", "add": "Sign in Blood", "reason": "cheaper"},
+                # Hallucinated add — not in alternatives
+                {"remove": "Command Tower", "add": "Fake Card", "reason": "x"},
+                # Basic land removal is forbidden
+                {"remove": "Swamp", "add": "Sign in Blood", "reason": "x"},
+                # Combo piece removal is forbidden
+                {"remove": "Exquisite Blood", "add": "Sign in Blood", "reason": "x"},
+            ],
+            alternatives_by_name={alt.name: alt},
+        )
 
-        assert deck.total == 3
-        assert "Fake Land" not in deck.all_cards
-        assert deck.all_cards.count("Command Tower") == 1
-        assert "Sol Ring" in deck.all_cards
-        assert deck.repair_notes
+        assert "Sign in Blood" in deck.all_cards
+        assert "Read the Bones" not in deck.all_cards
+        assert "Command Tower" in deck.all_cards  # invalid swap rejected
+        assert "Swamp" in deck.all_cards
+        assert "Exquisite Blood" in deck.all_cards
+        assert len(deck.llm_swaps) == 1
+        assert len(deck.repair_notes) == 3  # three rejections noted
 
     def test_validation_uses_dynamic_role_targets(self):
         from mtg_evaluator.deckbuilding.assembler import (

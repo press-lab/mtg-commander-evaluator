@@ -49,6 +49,7 @@ class BuildRequest(BaseModel):
     tutor_density: str = "light"
     max_card_price: float | None = None  # USD per-card budget cap
     salt_tolerance: str = "any"  # any | low | medium | high
+    build_style: str = "balanced"  # optimized | balanced | spicy
     pool_size: int = 200
     assemble: bool = False  # if True, run LLM assembler after building pool
 
@@ -298,6 +299,7 @@ async def build_pool(req: BuildRequest):
                 tutor_density=req.tutor_density,  # type: ignore[arg-type]
                 max_card_price=req.max_card_price,
                 salt_tolerance=req.salt_tolerance,  # type: ignore[arg-type]
+                build_style=req.build_style,  # type: ignore[arg-type]
                 pool_size=req.pool_size,
             )
             pool = build_card_pool(session, deck_req)
@@ -315,6 +317,75 @@ async def build_pool(req: BuildRequest):
 
             assembled_deck = assemble_deck(pool, bracket=req.bracket)
             warnings = validate_assembled_deck(assembled_deck, pool.role_targets)
+
+            # EDHREC consensus comparison (when per-commander data exists)
+            edhrec_comparison = None
+            if pool.commander_stats:
+                from sqlalchemy import select
+                from mtg_evaluator.db.models import Card as CardModel
+                from mtg_evaluator.db.models import CardClassification
+                from mtg_evaluator.deckbuilding.edhrec_compare import (
+                    CONSENSUS_THRESHOLD,
+                    compare_to_edhrec,
+                )
+
+                # Which consensus misses are simply unclassified?
+                deck_names_set = set(assembled_deck.all_cards)
+                miss_names = [
+                    n
+                    for n, s in pool.commander_stats.items()
+                    if (s.get("inclusion_rate") or 0) >= CONSENSUS_THRESHOLD
+                    and n not in deck_names_set
+                ]
+                classified_names: set[str] = set()
+                if miss_names:
+                    with get_session() as cls_session:
+                        classified_names = set(
+                            cls_session.scalars(
+                                select(CardModel.name)
+                                .join(
+                                    CardClassification,
+                                    CardClassification.oracle_id
+                                    == CardModel.oracle_id,
+                                )
+                                .where(CardModel.name.in_(miss_names))
+                                .where(CardClassification.is_valid == True)  # noqa: E712
+                            )
+                        )
+
+                comparison = compare_to_edhrec(
+                    assembled_deck.all_cards,
+                    pool,
+                    pool.commander_stats,
+                    classified_names=classified_names,
+                )
+                if comparison:
+                    for pick in comparison.off_meta:
+                        pick.rationale = assembled_deck.card_rationale.get(pick.name)
+                    edhrec_comparison = comparison.to_dict()
+
+                    # Self-learning loop: queue classification jobs for the
+                    # consensus cards we couldn't even consider. The next
+                    # classify-cards run closes this commander's data gap.
+                    unclassified_misses = [
+                        m.name
+                        for m in comparison.missed
+                        if m.reason == "not_classified"
+                    ]
+                    if unclassified_misses:
+                        try:
+                            from mtg_evaluator.classification.runner import (
+                                queue_jobs_for_names,
+                            )
+
+                            with get_session() as job_session:
+                                queued = queue_jobs_for_names(
+                                    job_session, unclassified_misses
+                                )
+                            if queued:
+                                edhrec_comparison["classification_queued"] = queued
+                        except Exception:
+                            pass  # queueing is best-effort
 
             # Estimated USD price of the final deck (known prices only)
             price_by_name = {
@@ -350,6 +421,9 @@ async def build_pool(req: BuildRequest):
                 "moxfield_text": assembled_deck.to_moxfield(),
                 "validation_warnings": warnings,
                 "repair_notes": assembled_deck.repair_notes,
+                "card_rationale": assembled_deck.card_rationale,
+                "llm_swaps": assembled_deck.llm_swaps,
+                "edhrec_comparison": edhrec_comparison,
                 "mana_analysis": (
                     assembled_deck.mana_analysis.to_dict()
                     if assembled_deck.mana_analysis

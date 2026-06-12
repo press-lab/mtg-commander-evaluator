@@ -459,6 +459,46 @@ All endpoints served by FastAPI at `http://localhost:8000`.
 
 ---
 
+## 16.5 The Solver (skeleton + bounded LLM refinement)
+
+The core product loop: guide the user to a commander → pick bracket + build
+style → produce a "solved" deck (no better options for the criteria).
+
+**Build styles** (`build_style` on DeckRequest/BuildRequest):
+- `optimized` — converge on the per-commander EDHREC consensus. Affinity =
+  inclusion×30 + synergy×25; consensus staples (≥40% inclusion) are exempt
+  from saturation down-weighting and always survive the pool trim.
+- `balanced` (default) — affinity = inclusion×8 + synergy×12.
+- `spicy` — consensus is a penalty (score ×(1−0.3×inclusion) above 30%
+  inclusion); underplayed cards that still grade well get +6.
+
+**Deterministic skeleton** (`deckbuilding/skeleton.py`): greedily solves every
+role target with the highest-scoring available cards. Double-duty cards credit
+all roles they fill. Lands: best nonbasics by tier score, then basics
+allocated by Karsten color-deficit math (basics are generated, never
+pool-dependent). Complete combos are included as units. The skeleton is
+optimal-by-construction w.r.t. the scoring criteria and always lands on the
+exact deck size.
+
+**LLM refinement** (`assembler.py`): DeepSeek reviews the baseline and may
+propose 0–12 swaps, each with a stated reason, drawn only from a named
+alternatives list. Every swap is validated (no basics/combo pieces removed,
+adds must be real alternatives); invalid swaps are rejected with a note. If
+the LLM fails entirely, the skeleton ships as-is. The LLM is a synergy-
+judgment layer, not the engine — it cannot produce a broken deck.
+
+**EDHREC comparison** (`deckbuilding/edhrec_compare.py`): for builds with
+per-commander data, the response includes overlap % with the consensus core
+(≥40% inclusion), every consensus card we skipped with its derived reason
+(bracket/salt/budget filtered, unclassified, or outscored), and our off-meta
+picks with rationale. Validated results (B4 optimized): Krenko 90% overlap,
+Henzie 77%.
+
+**Self-learning loop**: consensus cards we couldn't consider because they
+lack classification are auto-queued as classification jobs during the build
+(`queue_jobs_for_names`); `classify-cards` (edhrec_only now includes
+per-commander page cards) closes the gap on the next run.
+
 ## 17. LLM Assembly (Assembler)
 
 `assembler.py` — calls the LLM once per build to select the final deck.

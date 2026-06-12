@@ -132,6 +132,8 @@ class CardPool:
     consistency: Optional[ConsistencyReport] = None
     package_health: Optional[PackageHealth] = None
     nonbo_warnings: list[NonboWarning] = field(default_factory=list)
+    # Per-commander EDHREC data used during scoring (name → inclusion/synergy)
+    commander_stats: dict[str, dict] = field(default_factory=dict)
 
     @property
     def all_cards(self) -> list[PoolCard]:
@@ -292,6 +294,11 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     # --- Commander profile (Phase 5) ---
     profile = get_or_generate_profile(session, commander)
 
+    # No archetype requested or detected → fall back to the profile's
+    # preferred archetype so the 30-point archetype component isn't zeroed.
+    if not canonical_archetype and profile.preferred_archetypes:
+        canonical_archetype = normalize_archetype(profile.preferred_archetypes[0])
+
     # --- Per-commander EDHREC inclusion data (optional signal) ---
     from mtg_evaluator.ingestion.edhrec_commander import get_or_fetch_commander_stats
 
@@ -310,6 +317,7 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
         partner_mana_cost=partner_card.mana_cost if partner_card else None,
         partner_cmc=float(partner_card.cmc or 0) if partner_card else None,
         commander_profile=profile,
+        commander_stats=cmd_stats,
     )
 
     # --- Legal combos ---
@@ -539,20 +547,43 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
             if is_tutor:
                 score = round(score * tutor_multiplier, 2)
 
-        # Per-commander EDHREC affinity bonus (non-lands only — lands keep
-        # their tier-based scores). Inclusion rewards staples for THIS
-        # commander; synergy rewards cards over-represented here vs. the
-        # color-identity baseline.
+        # Per-commander EDHREC affinity (non-lands only — lands keep their
+        # tier-based scores). How strongly consensus pulls depends on the
+        # requested build style:
+        #   optimized — converge on the meta build (heavy inclusion/synergy pull)
+        #   balanced  — moderate signal
+        #   spicy     — consensus is a *penalty*; underplayed cards that still
+        #               grade well on role quality / archetype fit get a boost
         cmd_stat = cmd_stats.get(row.name) or cmd_stats.get(
             row.name.split(" // ")[0]
         )
         cmd_inclusion = cmd_stat["inclusion_rate"] if cmd_stat else None
         cmd_synergy = cmd_stat.get("synergy") if cmd_stat else None
-        if not is_land and cmd_stat:
-            affinity_bonus = (cmd_inclusion or 0.0) * 8 + max(
-                0.0, cmd_synergy or 0.0
-            ) * 12
-            score = round(min(100.0, score + affinity_bonus), 2)
+        if not is_land:
+            style = request.build_style
+            if cmd_stat and style == "optimized":
+                # Consensus must dominate: a 60%+ inclusion staple should
+                # comfortably clear the pool trim line on affinity alone.
+                affinity = (cmd_inclusion or 0.0) * 30 + max(
+                    0.0, cmd_synergy or 0.0
+                ) * 25
+                score = round(min(100.0, score + affinity), 2)
+            elif cmd_stat and style == "balanced":
+                affinity = (cmd_inclusion or 0.0) * 8 + max(
+                    0.0, cmd_synergy or 0.0
+                ) * 12
+                score = round(min(100.0, score + affinity), 2)
+            elif style == "spicy":
+                if cmd_stat and (cmd_inclusion or 0.0) > 0.30:
+                    # Heavily-played card — dock it so hidden gems can pass
+                    score = round(score * (1 - 0.3 * min(cmd_inclusion, 0.8)), 2)
+                elif (
+                    not cmd_stat
+                    and popularity < 0.5
+                    and ((row.arch_score or 0) >= 3 or rq >= 3.0)
+                ):
+                    # Off-meta card that still grades well — the spice
+                    score = round(min(100.0, score + 6), 2)
 
         combo_ids_for_card = [
             cid
@@ -594,6 +625,82 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
 
         all_scored.append(card)
 
+    # --- Known lands enter the pool even without classification ---
+    # Most nonbasic lands are never LLM-classified, but lands.py knows their
+    # quality tiers. Without this, mana bases collapse to basics plus whatever
+    # lands happen to be classified — and EDHREC overlap craters.
+    from mtg_evaluator.deckbuilding.lands import LAND_SCORES
+
+    seen_oracle_ids = {c.oracle_id for c in all_scored}
+    extra_land_rows = session.execute(
+        select(
+            Card.oracle_id,
+            Card.name,
+            Card.type_line,
+            Card.color_identity,
+            Card.cmc,
+            Card.oracle_text,
+            Card.price_usd,
+            EDHRecCardStats.num_decks,
+            EDHRecCardStats.salt_score,
+        )
+        .join(
+            EDHRecCardStats, EDHRecCardStats.oracle_id == Card.oracle_id, isouter=True
+        )
+        .where(Card.is_land == True)  # noqa: E712
+        .where(Card.name.in_(list(LAND_SCORES.keys())))
+        .where(Card.oracle_id != commander.oracle_id)
+    ).all()
+
+    for row in extra_land_rows:
+        if row.oracle_id in seen_oracle_ids:
+            continue
+        card_colors = set(row.color_identity or [])
+        if card_colors and not card_colors.issubset(deck_colors_set):
+            continue
+        is_gc = row.name in GAME_CHANGERS
+        if is_gc and request.bracket < 3:
+            continue
+        price = float(row.price_usd) if row.price_usd is not None else None
+        if (
+            request.max_card_price is not None
+            and price is not None
+            and price > request.max_card_price
+        ):
+            continue
+        salt = float(row.salt_score) if row.salt_score is not None else None
+        if salt_cap is not None and salt is not None and salt > salt_cap:
+            continue
+        ls = land_score(row.name, request.bracket)
+        if ls is None:
+            continue  # bracket-restricted land (e.g. Ancient Tomb below B3)
+        cmd_stat = cmd_stats.get(row.name)
+        seen_oracle_ids.add(row.oracle_id)
+        all_scored.append(
+            PoolCard(
+                name=row.name,
+                oracle_id=row.oracle_id,
+                tier="SUPPORT",
+                score=ls,
+                archetype_score=None,
+                bracket_score=None,
+                role_quality=0.0,
+                functions=[],
+                is_game_changer=is_gc,
+                combo_ids=[],
+                edhrec_decks=row.num_decks,
+                type_line=row.type_line,
+                cmc=float(row.cmc or 0),
+                oracle_text=row.oracle_text or "",
+                price_usd=price,
+                salt_score=salt,
+                commander_inclusion=(
+                    cmd_stat["inclusion_rate"] if cmd_stat else None
+                ),
+                commander_synergy=cmd_stat.get("synergy") if cmd_stat else None,
+            )
+        )
+
     # Sort and assign to tiers
     all_scored.sort(key=lambda c: c.score, reverse=True)
     for card in all_scored:
@@ -629,6 +736,14 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
                 role_counts_in_core[bucket] = role_counts_in_core.get(bucket, 0) + 1
 
     for card in pool.support + pool.flex:
+        # At optimized style, consensus staples are exempt from saturation —
+        # if 40%+ of this commander's decks play it, it has earned a slot
+        # regardless of how many same-role cards the CORE tier already has.
+        if (
+            request.build_style == "optimized"
+            and (card.commander_inclusion or 0) >= 0.4
+        ):
+            continue
         role_scores = {
             role: quality
             for role, quality in card.role_quality_by_role.items()
@@ -673,15 +788,44 @@ def build_card_pool(session: Session, request: DeckRequest) -> CardPool:
     pool.support.sort(key=lambda c: c.score, reverse=True)
     pool.flex.sort(key=lambda c: c.score, reverse=True)
 
-    # Trim to pool_size
-    total_target = request.pool_size
-    core_cap = min(len(pool.core), total_target // 4)
-    support_cap = min(len(pool.support), total_target // 2)
-    flex_cap = total_target - core_cap - support_cap
+    # Trim to pool_size. Lands are capped separately — the full land tier list
+    # (80+ playable lands) must never crowd spell candidates out of the pool.
+    def _is_land(c: PoolCard) -> bool:
+        return "land" in c.type_line.lower()
 
-    pool.core = pool.core[:core_cap]
-    pool.support = pool.support[:support_cap]
-    pool.flex = pool.flex[:flex_cap]
+    land_target = role_targets.lands if role_targets else 36
+    land_keep = min(land_target + 12, 48, max(10, request.pool_size // 4))
+    kept_lands = sorted(
+        (c for c in pool.core + pool.support + pool.flex if _is_land(c)),
+        key=lambda c: c.score,
+        reverse=True,
+    )[:land_keep]
+
+    core_nl = [c for c in pool.core if not _is_land(c)]
+    support_nl = [c for c in pool.support if not _is_land(c)]
+    flex_nl = [c for c in pool.flex if not _is_land(c)]
+
+    nonland_target = max(0, request.pool_size - len(kept_lands))
+    core_cap = min(len(core_nl), nonland_target // 4)
+    support_cap = min(len(support_nl), nonland_target // 2)
+    flex_cap = nonland_target - core_cap - support_cap
+
+    pool.core = core_nl[:core_cap]
+    pool.support = support_nl[:support_cap] + kept_lands
+    pool.flex = flex_nl[:flex_cap]
+
+    # Consensus floor (optimized style): cards in 40%+ of this commander's
+    # decks always survive the trim. The skeleton still picks by score — if
+    # a consensus card loses its slot, the EDHREC comparison reports exactly
+    # what outscored it, which is the defensible difference we want.
+    if request.build_style == "optimized":
+        kept_names = {c.name for c in pool.all_cards}
+        consensus_dropped = [
+            c
+            for c in core_nl[core_cap:] + support_nl[support_cap:] + flex_nl[flex_cap:]
+            if (c.commander_inclusion or 0) >= 0.4 and c.name not in kept_names
+        ]
+        pool.flex.extend(consensus_dropped[:30])
 
     # Sort combos by bracket tag priority
     tag_order = {"R": 0, "S": 1, "P": 2, "O": 3, "C": 4, "E": 5}

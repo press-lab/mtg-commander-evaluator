@@ -29,6 +29,13 @@ BRACKET_COMBO_ALLOWANCE: dict[int, set[str]] = {
 TutorDensity = Literal["none", "light", "heavy"]
 SaltTolerance = Literal["any", "low", "medium", "high"]
 
+# How heavily the per-commander EDHREC consensus pulls card selection.
+#   optimized — converge on the proven meta build ("what the hivemind plays")
+#   balanced  — quality first, consensus as a moderate signal (default)
+#   spicy     — deliberately prefer underplayed cards that still grade well;
+#               structure (roles, mana, consistency) is never sacrificed
+BuildStyle = Literal["optimized", "balanced", "spicy"]
+
 # Max salt score allowed per tolerance level (EDHREC salt is 0-4).
 # "any" = no filtering. "low" = only mild cards. "high" = almost everything.
 SALT_THRESHOLDS: dict[str, float] = {
@@ -52,6 +59,7 @@ class DeckRequest:
     tutor_density: TutorDensity = "light"
     max_card_price: float | None = None  # USD cap per card; None = no budget limit
     salt_tolerance: SaltTolerance = "any"  # filter cards above the salt threshold
+    build_style: BuildStyle = "balanced"  # meta-convergent vs. spicy card selection
     free_text_notes: str | None = None  # any extra user notes
 
     pool_size: int = 300  # how many cards to return
